@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014, 2016 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, 2016-2017 The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -28,7 +28,7 @@
  */
 #define LOG_TAG "soundtrigger"
 /* #define LOG_NDEBUG 0 */
-#define LOG_NDDEBUG 0
+#define LOG_NDEBUG 0
 
 #include <errno.h>
 #include <stdbool.h>
@@ -43,6 +43,7 @@
 
 #define XSTR(x) STR(x)
 #define STR(x) #x
+#define MAX_LIBRARY_PATH 100
 
 struct sound_trigger_info  {
     struct sound_trigger_session_info st_ses;
@@ -59,6 +60,21 @@ struct sound_trigger_audio_device {
 };
 
 static struct sound_trigger_audio_device *st_dev;
+
+#if LINUX_ENABLED
+static void get_library_path(char *lib_path)
+{
+    snprintf(lib_path, MAX_LIBRARY_PATH,
+             "/usr/lib/sound_trigger.primary.default.so");
+}
+#else
+static void get_library_path(char *lib_path)
+{
+    snprintf(lib_path, MAX_LIBRARY_PATH,
+             "/system/vendor/lib/hw/sound_trigger.primary.%s.so",
+             XSTR(SOUND_TRIGGER_PLATFORM_NAME));
+}
+#endif
 
 static struct sound_trigger_info *
 get_sound_trigger_info(int capture_handle)
@@ -219,6 +235,7 @@ void audio_extn_sound_trigger_update_device_status(snd_device_t snd_device,
     int device_type = -1;
 
     if (!st_dev)
+        ALOGE("%s: !st_dev", __func__);
        return;
 
     if (snd_device >= SND_DEVICE_OUT_BEGIN &&
@@ -333,6 +350,39 @@ void audio_extn_sound_trigger_set_parameters(struct audio_device *adev __unused,
         event.u.value = val;
         st_dev->st_callback(AUDIO_EVENT_NUM_ST_SESSIONS, &event);
     }
+
+    ret = str_parms_get_int(params, AUDIO_PARAMETER_DEVICE_CONNECT, &val);
+    if ((ret >= 0) && audio_is_input_device(val)) {
+        event.u.value = val;
+        st_dev->st_callback(AUDIO_EVENT_DEVICE_CONNECT, &event);
+    }
+
+    ret = str_parms_get_int(params, AUDIO_PARAMETER_DEVICE_DISCONNECT, &val);
+    if ((ret >= 0) && audio_is_input_device(val)) {
+        event.u.value = val;
+        st_dev->st_callback(AUDIO_EVENT_DEVICE_DISCONNECT, &event);
+    }
+
+    ret = str_parms_get_str(params, "SVA_EXEC_MODE", value, sizeof(value));
+    if (ret >= 0) {
+        strlcpy(event.u.str_value, value, sizeof(event.u.str_value));
+        st_dev->st_callback(AUDIO_EVENT_SVA_EXEC_MODE, &event);
+    }
+}
+
+void audio_extn_sound_trigger_get_parameters(const struct audio_device *adev __unused,
+                       struct str_parms *query, struct str_parms *reply)
+{
+    audio_event_info_t event;
+    int ret;
+    char value[32];
+
+    ret = str_parms_get_str(query, "SVA_EXEC_MODE_STATUS", value,
+                                                  sizeof(value));
+    if (ret >= 0) {
+        st_dev->st_callback(AUDIO_EVENT_SVA_EXEC_MODE_STATUS, &event);
+        str_parms_add_int(reply, "SVA_EXEC_MODE_STATUS", event.u.value);
+    }
 }
 
 int audio_extn_sound_trigger_init(struct audio_device *adev)
@@ -349,10 +399,7 @@ int audio_extn_sound_trigger_init(struct audio_device *adev)
         return -ENOMEM;
     }
 
-    snprintf(sound_trigger_lib, sizeof(sound_trigger_lib),
-             "/system/vendor/lib/hw/sound_trigger.primary.%s.so",
-              XSTR(SOUND_TRIGGER_PLATFORM_NAME));
-
+    get_library_path(sound_trigger_lib);
     st_dev->lib_handle = dlopen(sound_trigger_lib, RTLD_NOW);
 
     if (st_dev->lib_handle == NULL) {

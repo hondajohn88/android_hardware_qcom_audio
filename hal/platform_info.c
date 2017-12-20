@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -28,7 +28,7 @@
  */
 
 #define LOG_TAG "platform_info"
-#define LOG_NDDEBUG 0
+#define LOG_NDEBUG 0
 
 #include <errno.h>
 #include <stdio.h>
@@ -38,6 +38,7 @@
 #include <audio_hw.h>
 #include "platform_api.h"
 #include <platform.h>
+#include <math.h>
 
 #define BUF_SIZE                    1024
 
@@ -49,7 +50,8 @@ typedef enum {
     BACKEND_NAME,
     INTERFACE_NAME,
     CONFIG_PARAMS,
-    DEVICE_NAME,
+    GAIN_LEVEL_MAPPING,
+    ACDB_METAINFO_KEY,
 } section_t;
 
 typedef void (* section_process_fn)(const XML_Char **attr);
@@ -61,7 +63,8 @@ static void process_backend_name(const XML_Char **attr);
 static void process_interface_name(const XML_Char **attr);
 static void process_config_params(const XML_Char **attr);
 static void process_root(const XML_Char **attr);
-static void process_device_name(const XML_Char **attr);
+static void process_gain_db_to_level_map(const XML_Char **attr);
+static void process_acdb_metainfo_key(const XML_Char **attr);
 
 static section_process_fn section_table[] = {
     [ROOT] = process_root,
@@ -71,7 +74,8 @@ static section_process_fn section_table[] = {
     [BACKEND_NAME] = process_backend_name,
     [INTERFACE_NAME] = process_interface_name,
     [CONFIG_PARAMS] = process_config_params,
-    [DEVICE_NAME] = process_device_name,
+    [GAIN_LEVEL_MAPPING] = process_gain_db_to_level_map,
+    [ACDB_METAINFO_KEY] = process_acdb_metainfo_key,
 };
 
 static section_t section;
@@ -110,11 +114,6 @@ static struct platform_info my_data;
  *      ...
  *      ...
  * </config_params>
- * <device_names>
- * <device name="???" alias="???"/>
- * ...
- * ...
- * </device_names>
  * </audio_platform_info>
  */
 
@@ -177,6 +176,7 @@ static void process_backend_name(const XML_Char **attr)
 {
     int index;
     char *hw_interface = NULL;
+    char *backend = NULL;
 
     if (strcmp(attr[0], "name") != 0) {
         ALOGE("%s: 'name' not found, no ACDB ID set!", __func__);
@@ -191,9 +191,10 @@ static void process_backend_name(const XML_Char **attr)
     }
 
     if (strcmp(attr[2], "backend") != 0) {
-        ALOGE("%s: Device %s has no backend set!",
-              __func__, attr[1]);
-        goto done;
+        if (strcmp(attr[2], "interface") == 0)
+            hw_interface = (char *)attr[3];
+    } else {
+        backend = (char *)attr[3];
     }
 
     if (attr[4] != NULL) {
@@ -204,7 +205,7 @@ static void process_backend_name(const XML_Char **attr)
         }
     }
 
-    if (platform_set_snd_device_backend(index, attr[3], hw_interface) < 0) {
+    if (platform_set_snd_device_backend(index, backend, hw_interface) < 0) {
         ALOGE("%s: Device %s backend %s was not set!",
               __func__, attr[1], attr[3]);
         goto done;
@@ -213,6 +214,30 @@ static void process_backend_name(const XML_Char **attr)
 done:
     return;
 }
+
+static void process_gain_db_to_level_map(const XML_Char **attr)
+{
+    struct amp_db_and_gain_table tbl_entry;
+
+    if ((strcmp(attr[0], "db") != 0) ||
+        (strcmp(attr[2], "level") != 0)) {
+        ALOGE("%s: invalid attribute passed  %s %sexpected amp db level",
+               __func__, attr[0], attr[2]);
+        goto done;
+    }
+
+    tbl_entry.db = atof(attr[1]);
+    tbl_entry.amp = exp(tbl_entry.db * 0.115129f);
+    tbl_entry.level = atoi(attr[3]);
+
+    ALOGV("%s: amp [%f]  db [%f] level [%d]", __func__,
+           tbl_entry.amp, tbl_entry.db, tbl_entry.level);
+    platform_add_gain_level_mapping(&tbl_entry);
+
+done:
+    return;
+}
+
 
 static void process_acdb_id(const XML_Char **attr)
 {
@@ -330,31 +355,22 @@ done:
     return;
 }
 
-static void process_device_name(const XML_Char **attr)
+/* process acdb meta info key value */
+static void process_acdb_metainfo_key(const XML_Char **attr)
 {
-    int index;
-
     if (strcmp(attr[0], "name") != 0) {
-        ALOGE("%s: 'name' not found, no alias set!", __func__);
+        ALOGE("%s: 'name' not found", __func__);
         goto done;
     }
 
-    index = platform_get_snd_device_index((char *)attr[1]);
-    if (index < 0) {
-        ALOGE("%s: Device %s in platform info xml not found, no alias set!",
-              __func__, attr[1]);
+    if (strcmp(attr[2], "value") != 0) {
+        ALOGE("%s: 'value' not found", __func__);
         goto done;
     }
 
-    if (strcmp(attr[2], "alias") != 0) {
-        ALOGE("%s: Device %s in platform info xml has no alias, no alias set!",
-              __func__, attr[1]);
-        goto done;
-    }
-
-    if (platform_set_snd_device_name(index, attr[3]) < 0) {
-        ALOGE("%s: Device %s, alias %s was not set!",
-              __func__, attr[1], attr[3]);
+    int key = atoi((char *)attr[3]);
+    if (platform_set_acdb_metainfo_key(my_data.platform, (char*)attr[1], key) < 0) {
+        ALOGE("%s: key %d was not set!", __func__, key);
         goto done;
     }
 
@@ -377,17 +393,27 @@ static void start_tag(void *userdata __unused, const XML_Char *tag_name,
         section = CONFIG_PARAMS;
     } else if (strcmp(tag_name, "interface_names") == 0) {
         section = INTERFACE_NAME;
-    } else if (strcmp(tag_name, "device_names") == 0) {
-        section = DEVICE_NAME;
+    } else if (strcmp(tag_name, "gain_db_to_level_mapping") == 0) {
+        section = GAIN_LEVEL_MAPPING;
+    } else if(strcmp(tag_name, "acdb_metainfo_key") == 0) {
+        section = ACDB_METAINFO_KEY;
     } else if (strcmp(tag_name, "device") == 0) {
         if ((section != ACDB) && (section != BACKEND_NAME) && (section != BITWIDTH) &&
-            (section != INTERFACE_NAME) && (section != DEVICE_NAME)) {
-            ALOGE("device tag only supported for acdb/backend names/bitwidth/interface/device names");
+            (section != INTERFACE_NAME)) {
+            ALOGE("device tag only supported for acdb/backend names/bitwitdh/interface names");
             return;
         }
 
         /* call into process function for the current section */
         section_process_fn fn = section_table[section];
+        fn(attr);
+    } else if (strcmp(tag_name, "gain_level_map") == 0) {
+        if (section != GAIN_LEVEL_MAPPING) {
+            ALOGE("usecase tag only supported with GAIN_LEVEL_MAPPING section");
+            return;
+        }
+
+        section_process_fn fn = section_table[GAIN_LEVEL_MAPPING];
         fn(attr);
     } else if (strcmp(tag_name, "usecase") == 0) {
         if (section != PCM_ID) {
@@ -398,7 +424,7 @@ static void start_tag(void *userdata __unused, const XML_Char *tag_name,
         section_process_fn fn = section_table[PCM_ID];
         fn(attr);
     } else if (strcmp(tag_name, "param") == 0) {
-        if (section != CONFIG_PARAMS) {
+        if ((section != CONFIG_PARAMS) && (section != ACDB_METAINFO_KEY)) {
             ALOGE("param tag only supported with CONFIG_PARAMS section");
             return;
         }
@@ -425,7 +451,9 @@ static void end_tag(void *userdata __unused, const XML_Char *tag_name)
         platform_set_parameters(my_data.platform, my_data.kvpairs);
     } else if (strcmp(tag_name, "interface_names") == 0) {
         section = ROOT;
-    } else if (strcmp(tag_name, "device_names") == 0) {
+    } else if (strcmp(tag_name, "gain_db_to_level_mapping") == 0) {
+        section = ROOT;
+    } else if (strcmp(tag_name, "acdb_metainfo_key") == 0) {
         section = ROOT;
     }
 }

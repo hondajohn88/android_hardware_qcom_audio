@@ -117,6 +117,11 @@ enum speaker_protection_mode {
     SPKR_PROTECTION_MODE_CALIBRATE = 1,
 };
 
+struct spkr_prot_r0t0 {
+    int r0[SP_V2_NUM_MAX_SPKRS];
+    int t0[SP_V2_NUM_MAX_SPKRS];
+};
+
 struct speaker_prot_session {
     int spkr_prot_mode;
     int spkr_processing_state;
@@ -142,6 +147,7 @@ struct speaker_prot_session {
     bool spkr_prot_enable;
     bool spkr_in_use;
     struct timespec spkr_last_time_used;
+    struct spkr_prot_r0t0 sp_r0t0_cal;
     bool wsa_found;
     int spkr_1_tzn;
     int spkr_2_tzn;
@@ -340,6 +346,7 @@ static int set_spkr_prot_cal(int cal_fd,
     int ret = 0;
     struct audio_cal_fb_spk_prot_cfg    cal_data;
     char value[PROPERTY_VALUE_MAX];
+    static int cal_done = 0;
 
     if (cal_fd < 0) {
         ALOGE("%s: Error: cal_fd = %d", __func__, cal_fd);
@@ -381,6 +388,13 @@ static int set_spkr_prot_cal(int cal_fd,
             __func__);
         ret = -ENODEV;
         goto done;
+    }
+    if (protCfg->mode == MSM_SPKR_PROT_CALIBRATED  && !cal_done) {
+        handle.sp_r0t0_cal.r0[SP_V2_SPKR_1] = protCfg->r0[SP_V2_SPKR_1];
+        handle.sp_r0t0_cal.r0[SP_V2_SPKR_2] = protCfg->r0[SP_V2_SPKR_2];
+        handle.sp_r0t0_cal.t0[SP_V2_SPKR_1] = protCfg->t0[SP_V2_SPKR_1];
+        handle.sp_r0t0_cal.t0[SP_V2_SPKR_2] = protCfg->t0[SP_V2_SPKR_2];
+        cal_done = 1;
     }
 done:
     return ret;
@@ -670,6 +684,7 @@ static void* spkr_calibration_thread()
     char buf[32] = {0};
     int ret;
 
+    memset(&protCfg, 0, sizeof(protCfg));
     /* If the value of this persist.spkr.cal.duration is 0
      * then it means it will take 30min to calibrate
      * and if the value is greater than zero then it would take
@@ -1035,9 +1050,9 @@ static void get_spkr_prot_ftm_param(char *param)
     struct audio_cal_sp_th_vi_param th_vi_cal_data;
     struct audio_cal_sp_ex_vi_param ex_vi_cal_data;
     int i;
-    int ftm_status[SP_V2_NUM_MAX_SPKRS];
-    double rdc[SP_V2_NUM_MAX_SPKRS], temp[SP_V2_NUM_MAX_SPKRS];
-    double f[SP_V2_NUM_MAX_SPKRS], r[SP_V2_NUM_MAX_SPKRS], q[SP_V2_NUM_MAX_SPKRS];
+    int ftm_status[SP_V2_NUM_MAX_SPKRS] = {0};
+    double rdc[SP_V2_NUM_MAX_SPKRS] = {0}, temp[SP_V2_NUM_MAX_SPKRS] = {0};
+    double f[SP_V2_NUM_MAX_SPKRS] = {0}, r[SP_V2_NUM_MAX_SPKRS] = {0}, q[SP_V2_NUM_MAX_SPKRS] = {0};
 
     int cal_fd = open("/dev/msm_audio_cal",O_RDWR | O_NONBLOCK);
     if (cal_fd < 0) {
@@ -1347,12 +1362,48 @@ void audio_extn_spkr_prot_init(void *adev)
     }
 }
 
+int audio_extn_select_spkr_prot_cal_data(snd_device_t snd_device)
+{
+    struct audio_cal_info_spk_prot_cfg protCfg;
+    int acdb_fd = -1;
+    int ret = 0;
+
+    acdb_fd = open("/dev/msm_audio_cal", O_RDWR | O_NONBLOCK);
+    if (acdb_fd < 0) {
+        ALOGE("%s: open msm_acdb failed", __func__);
+        return -ENODEV;
+    }
+    switch(snd_device) {
+        case SND_DEVICE_OUT_VOICE_SPEAKER_2_PROTECTED_VBAT:
+        case SND_DEVICE_OUT_VOICE_SPEAKER_2_PROTECTED:
+            protCfg.r0[SP_V2_SPKR_1] = handle.sp_r0t0_cal.r0[SP_V2_SPKR_2];
+            protCfg.r0[SP_V2_SPKR_2] = handle.sp_r0t0_cal.r0[SP_V2_SPKR_1];
+            protCfg.t0[SP_V2_SPKR_1] = handle.sp_r0t0_cal.t0[SP_V2_SPKR_2];
+            protCfg.t0[SP_V2_SPKR_2] = handle.sp_r0t0_cal.t0[SP_V2_SPKR_1];
+            break;
+        default:
+            protCfg.r0[SP_V2_SPKR_1] = handle.sp_r0t0_cal.r0[SP_V2_SPKR_1];
+            protCfg.r0[SP_V2_SPKR_2] = handle.sp_r0t0_cal.r0[SP_V2_SPKR_2];
+            protCfg.t0[SP_V2_SPKR_1] = handle.sp_r0t0_cal.t0[SP_V2_SPKR_1];
+            protCfg.t0[SP_V2_SPKR_2] = handle.sp_r0t0_cal.t0[SP_V2_SPKR_2];
+            break;
+    }
+    protCfg.mode = MSM_SPKR_PROT_CALIBRATED;
+    ret = set_spkr_prot_cal(acdb_fd, &protCfg);
+    if (ret)
+        ALOGE("%s: speaker protection cal data swap failed", __func__);
+
+    close(acdb_fd);
+    return ret;
+}
+
 int audio_extn_spkr_prot_start_processing(snd_device_t snd_device)
 {
     struct audio_usecase *uc_info_tx;
     struct audio_device *adev = handle.adev_handle;
     int32_t pcm_dev_tx_id = -1, ret = 0;
     bool disable_tx = false;
+    snd_device_t in_snd_device;
 
     ALOGV("%s: Entry", __func__);
     /* cancel speaker calibration */
@@ -1361,6 +1412,15 @@ int audio_extn_spkr_prot_start_processing(snd_device_t snd_device)
        return -EINVAL;
     }
     snd_device = platform_get_spkr_prot_snd_device(snd_device);
+    if (handle.spkr_prot_mode == MSM_SPKR_PROT_CALIBRATED) {
+        ret = audio_extn_select_spkr_prot_cal_data(snd_device);
+        if (ret) {
+            ALOGE("%s: Setting speaker protection cal data failed", __func__);
+            return ret;
+        }
+    }
+
+    in_snd_device = platform_get_vi_feedback_snd_device(snd_device);
     spkr_prot_set_spkrstatus(true);
     uc_info_tx = (struct audio_usecase *)calloc(1, sizeof(struct audio_usecase));
     if (!uc_info_tx) {
@@ -1375,12 +1435,12 @@ int audio_extn_spkr_prot_start_processing(snd_device_t snd_device)
     if (handle.spkr_processing_state == SPKR_PROCESSING_IN_IDLE) {
         uc_info_tx->id = USECASE_AUDIO_SPKR_CALIB_TX;
         uc_info_tx->type = PCM_CAPTURE;
-        uc_info_tx->in_snd_device = SND_DEVICE_IN_CAPTURE_VI_FEEDBACK;
+        uc_info_tx->in_snd_device = in_snd_device;
         uc_info_tx->out_snd_device = SND_DEVICE_NONE;
         handle.pcm_tx = NULL;
         list_add_tail(&adev->usecase_list, &uc_info_tx->list);
         disable_tx = true;
-        enable_snd_device(adev, SND_DEVICE_IN_CAPTURE_VI_FEEDBACK);
+        enable_snd_device(adev, in_snd_device);
         enable_audio_route(adev, uc_info_tx);
 
         pcm_dev_tx_id = platform_get_pcm_device_id(uc_info_tx->id, PCM_CAPTURE);
@@ -1420,9 +1480,9 @@ exit:
         list_remove(&uc_info_tx->list);
         uc_info_tx->id = USECASE_AUDIO_SPKR_CALIB_TX;
         uc_info_tx->type = PCM_CAPTURE;
-        uc_info_tx->in_snd_device = SND_DEVICE_IN_CAPTURE_VI_FEEDBACK;
+        uc_info_tx->in_snd_device = in_snd_device;
         uc_info_tx->out_snd_device = SND_DEVICE_NONE;
-        disable_snd_device(adev, SND_DEVICE_IN_CAPTURE_VI_FEEDBACK);
+        disable_snd_device(adev, in_snd_device);
         disable_audio_route(adev, uc_info_tx);
         free(uc_info_tx);
     } else
@@ -1436,17 +1496,20 @@ void audio_extn_spkr_prot_stop_processing(snd_device_t snd_device)
 {
     struct audio_usecase *uc_info_tx;
     struct audio_device *adev = handle.adev_handle;
+    snd_device_t in_snd_device;
 
     ALOGV("%s: Entry", __func__);
     snd_device = platform_get_spkr_prot_snd_device(snd_device);
     spkr_prot_set_spkrstatus(false);
+    in_snd_device = platform_get_vi_feedback_snd_device(snd_device);
+
     pthread_mutex_lock(&handle.mutex_spkr_prot);
     if (adev && handle.spkr_processing_state == SPKR_PROCESSING_IN_PROGRESS) {
         uc_info_tx = get_usecase_from_list(adev, USECASE_AUDIO_SPKR_CALIB_TX);
         if (handle.pcm_tx)
             pcm_close(handle.pcm_tx);
         handle.pcm_tx = NULL;
-        disable_snd_device(adev, SND_DEVICE_IN_CAPTURE_VI_FEEDBACK);
+        disable_snd_device(adev, in_snd_device);
         if (uc_info_tx) {
             list_remove(&uc_info_tx->list);
             disable_audio_route(adev, uc_info_tx);

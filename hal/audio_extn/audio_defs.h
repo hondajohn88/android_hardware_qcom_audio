@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, 2017, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -102,5 +102,54 @@
 #define AUDIO_PARAMETER_KEY_CAN_OPEN_PROXY "can_open_proxy"
 
 #define AUDIO_PARAMETER_IS_HW_DECODER_SESSION_ALLOWED  "is_hw_dec_session_allowed"
+
+/* Set or Query stream profile type */
+#define AUDIO_PARAMETER_STREAM_PROFILE "audio_stream_profile"
+
+#define AUDIO_PARAMETER_KEY_VR_AUDIO_MODE "vr_audio_mode_on"
+
+/* audio input flags for compress and timestamp mode.
+ * check other input flags defined in audio.h for conflicts
+ */
+#define AUDIO_INPUT_FLAG_TIMESTAMP 0x80000000
+#define AUDIO_INPUT_FLAG_COMPRESS  0x40000000
+
+/* MAX SECTORS for sourcetracking feature */
+#define MAX_SECTORS 8
+
+struct source_tracking_param {
+    uint8_t   vad[MAX_SECTORS];
+    uint16_t  doa_speech;
+    uint16_t  doa_noise[3];
+    uint8_t   polar_activity[360];
+};
+
+struct sound_focus_param {
+    uint16_t  start_angle[MAX_SECTORS];
+    uint8_t   enable[MAX_SECTORS];
+    uint16_t  gain_step;
+};
+
+struct aptx_dec_bt_addr {
+    uint32_t nap;
+    uint32_t uap;
+    uint32_t lap;
+};
+
+struct aptx_dec_param {
+   struct aptx_dec_bt_addr bt_addr;
+};
+
+typedef union {
+    struct source_tracking_param st_params;
+    struct sound_focus_param sf_params;
+    struct aptx_dec_param aptx_params;
+} audio_extn_param_payload;
+
+typedef enum {
+    AUDIO_EXTN_PARAM_SOURCE_TRACK,
+    AUDIO_EXTN_PARAM_SOUND_FOCUS,
+    AUDIO_EXTN_PARAM_APTX_DEC
+} audio_extn_param_id;
 
 #endif /* AUDIO_DEFS_H */

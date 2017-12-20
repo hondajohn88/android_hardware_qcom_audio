@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  * Not a Contribution.
  *
  * Copyright (C) 2013 The Android Open Source Project
@@ -65,17 +65,11 @@ struct audio_extn_module {
     bool hpx_enabled;
     bool vbat_enabled;
     bool hifi_audio_enabled;
+    bool ras_enabled;
+    struct aptx_dec_bt_addr addr;
 };
 
-static struct audio_extn_module aextnmod = {
-    .anc_enabled = 0,
-    .aanc_enabled = 0,
-    .custom_stereo_enabled = 0,
-    .proxy_channel_num = 2,
-    .hpx_enabled = 0,
-    .vbat_enabled = 0,
-    .hifi_audio_enabled = 0,
-};
+static struct audio_extn_module aextnmod;
 
 #define AUDIO_PARAMETER_KEY_ANC        "anc_enabled"
 #define AUDIO_PARAMETER_KEY_WFD        "wfd_channel_cap"
@@ -84,6 +78,7 @@ static struct audio_extn_module aextnmod = {
 /* Query offload playback instances count */
 #define AUDIO_PARAMETER_OFFLOAD_NUM_ACTIVE "offload_num_active"
 #define AUDIO_PARAMETER_HPX            "HPX"
+#define AUDIO_PARAMETER_APTX_DEC_BT_ADDR "bt_addr"
 
 /*
 * update sysfs node hdmi_audio_cb to enable notification acknowledge feature
@@ -96,7 +91,7 @@ static struct audio_extn_module aextnmod = {
 * this is done when device switch happens by setting audioparamter
 */
 
-#define HDMI_PLUG_STATUS_NOTIFY_ENABLE 0x30
+#define EXT_DISPLAY_PLUG_STATUS_NOTIFY_ENABLE 0x30
 
 static ssize_t update_sysfs_node(const char *path, const char *data, size_t len)
 {
@@ -121,56 +116,62 @@ static ssize_t update_sysfs_node(const char *path, const char *data, size_t len)
     return err;
 }
 
-static int get_hdmi_sysfs_node_index()
+static int get_ext_disp_sysfs_node_index(int ext_disp_type)
 {
-    static int node_index = -1;
+    int node_index = -1;
     char fbvalue[80] = {0};
     char fbpath[80] = {0};
     int i = 0;
-    FILE *hdmi_fp = NULL;
+    FILE *ext_disp_fd = NULL;
 
-    if(node_index >= 0) {
-        //hdmi sysfs node will not change so we just need to get the index once.
-        ALOGV("HDMI sysfs node is at fb%d", node_index);
-        return node_index;
-    }
-
-    for(i = 0; i < 3; i++) {
+    while (1) {
         snprintf(fbpath, sizeof(fbpath),
                   "/sys/class/graphics/fb%d/msm_fb_type", i);
-        hdmi_fp = fopen(fbpath, "r");
-        if(hdmi_fp) {
-            fread(fbvalue, sizeof(char), 80, hdmi_fp);
-            if(strncmp(fbvalue, "dtv panel", strlen("dtv panel")) == 0) {
-                node_index = i;
-                ALOGV("HDMI is at fb%d",i);
-                fclose(hdmi_fp);
-                return node_index;
+        ext_disp_fd = fopen(fbpath, "r");
+        if (ext_disp_fd) {
+            if (fread(fbvalue, sizeof(char), 80, ext_disp_fd)) {
+                if(((strncmp(fbvalue, "dtv panel", strlen("dtv panel")) == 0) &&
+                    (ext_disp_type == EXT_DISPLAY_TYPE_HDMI)) ||
+                   ((strncmp(fbvalue, "dp panel", strlen("dp panel")) == 0) &&
+                    (ext_disp_type == EXT_DISPLAY_TYPE_DP))) {
+                    node_index = i;
+                    ALOGD("%s: Ext Disp:%d is at fb%d", __func__, ext_disp_type, i);
+                    fclose(ext_disp_fd);
+                    return node_index;
+                }
             }
-            fclose(hdmi_fp);
+            fclose(ext_disp_fd);
+            i++;
         } else {
-            ALOGE("Failed to open fb node %d",i);
+            ALOGE("%s: Scanned till end of fbs or Failed to open fb node %d", __func__, i);
+            break;
         }
     }
 
     return -1;
 }
 
-static int update_hdmi_sysfs_node(int node_value)
+static int update_ext_disp_sysfs_node(const struct audio_device *adev, int node_value)
 {
-    char hdmi_ack_path[80] = {0};
-    char hdmi_ack_value[3] = {0};
+    char ext_disp_ack_path[80] = {0};
+    char ext_disp_ack_value[3] = {0};
     int index, ret = -1;
+    int ext_disp_type = platform_get_ext_disp_type(adev->platform);
 
-    index = get_hdmi_sysfs_node_index();
+    if (ext_disp_type < 0) {
+        ALOGE("%s, Unable to get the external display type, err:%d",
+              __func__, ext_disp_type);
+        return -EINVAL;
+    }
 
+    index = get_ext_disp_sysfs_node_index(ext_disp_type);
     if (index >= 0) {
-        snprintf(hdmi_ack_value, sizeof(hdmi_ack_value), "%d", node_value);
-        snprintf(hdmi_ack_path, sizeof(hdmi_ack_path),
+        snprintf(ext_disp_ack_value, sizeof(ext_disp_ack_value), "%d", node_value);
+        snprintf(ext_disp_ack_path, sizeof(ext_disp_ack_path),
                   "/sys/class/graphics/fb%d/hdmi_audio_cb", index);
 
-        ret = update_sysfs_node(hdmi_ack_path, hdmi_ack_value,
-                sizeof(hdmi_ack_value));
+        ret = update_sysfs_node(ext_disp_ack_path, ext_disp_ack_value,
+                sizeof(ext_disp_ack_value));
 
         ALOGI("update hdmi_audio_cb at fb[%d] to:[%d] %s",
             index, node_value, (ret >= 0) ? "success":"fail");
@@ -179,41 +180,38 @@ static int update_hdmi_sysfs_node(int node_value)
     return ret;
 }
 
-static void check_and_set_hdmi_connection_status(struct str_parms *parms)
+static void audio_extn_ext_disp_set_parameters(const struct audio_device *adev,
+                                                     struct str_parms *parms)
 {
     char value[32] = {0};
     static bool is_hdmi_sysfs_node_init = false;
 
     if (str_parms_get_str(parms, "connect", value, sizeof(value)) >= 0
-            && (atoi(value) & AUDIO_DEVICE_OUT_HDMI)) {
-        //params = "connect=1024" for HDMI connection.
+            && (atoi(value) & AUDIO_DEVICE_OUT_AUX_DIGITAL)) {
+        //params = "connect=1024" for external display connection.
         if (is_hdmi_sysfs_node_init == false) {
+            //check if this is different for dp and hdmi
             is_hdmi_sysfs_node_init = true;
-            update_hdmi_sysfs_node(HDMI_PLUG_STATUS_NOTIFY_ENABLE);
+            update_ext_disp_sysfs_node(adev, EXT_DISPLAY_PLUG_STATUS_NOTIFY_ENABLE);
         }
-        update_hdmi_sysfs_node(1);
+        update_ext_disp_sysfs_node(adev, 1);
     } else if(str_parms_get_str(parms, "disconnect", value, sizeof(value)) >= 0
-            && (atoi(value) & AUDIO_DEVICE_OUT_HDMI)){
-        //params = "disconnect=1024" for HDMI disconnection.
-        update_hdmi_sysfs_node(0);
+            && (atoi(value) & AUDIO_DEVICE_OUT_AUX_DIGITAL)){
+        //params = "disconnect=1024" for external display disconnection.
+        update_ext_disp_sysfs_node(adev, 0);
+        ALOGV("invalidate cached edid");
+        platform_invalidate_hdmi_config(adev->platform);
     } else {
-        // handle hdmi devices only
+        // handle ext disp devices only
         return;
     }
 }
-
 
 #ifndef FM_POWER_OPT
 #define audio_extn_fm_set_parameters(adev, parms) (0)
 #else
 void audio_extn_fm_set_parameters(struct audio_device *adev,
                                    struct str_parms *parms);
-#endif
-#ifndef HFP_ENABLED
-#define audio_extn_hfp_set_parameters(adev, parms) (0)
-#else
-void audio_extn_hfp_set_parameters(struct audio_device *adev,
-                                           struct str_parms *parms);
 #endif
 
 #ifndef SOURCE_TRACKING_ENABLED
@@ -377,6 +375,23 @@ bool audio_extn_can_use_vbat(void)
 
     ALOGD("%s: vbat.enabled property is set to %s", __func__, prop_vbat_enabled);
     return (aextnmod.vbat_enabled ? true: false);
+}
+#endif
+
+#ifdef RAS_ENABLED
+bool audio_extn_is_ras_enabled(void)
+{
+    ALOGD("%s: status: %d", __func__, aextnmod.ras_enabled);
+    return (aextnmod.ras_enabled ? true: false);
+}
+
+bool audio_extn_can_use_ras(void)
+{
+    if (property_get_bool("persist.audio.ras.enabled", false))
+        aextnmod.ras_enabled = 1;
+
+    ALOGD("%s: ras.enabled property is set to %d", __func__, aextnmod.ras_enabled);
+    return (aextnmod.ras_enabled ? true: false);
 }
 #endif
 
@@ -743,6 +758,23 @@ static int get_active_offload_usecases(const struct audio_device *adev,
     return ret;
 }
 
+void audio_extn_init(struct audio_device *adev __unused)
+{
+    aextnmod.anc_enabled = 0;
+    aextnmod.aanc_enabled = 0;
+    aextnmod.custom_stereo_enabled = 0;
+    aextnmod.proxy_channel_num = 2;
+    aextnmod.hpx_enabled = 0;
+    aextnmod.vbat_enabled = 0;
+    aextnmod.hifi_audio_enabled = 0;
+    aextnmod.addr.nap = 0;
+    aextnmod.addr.uap = 0;
+    aextnmod.addr.lap = 0;
+
+    audio_extn_dolby_set_license(adev);
+    audio_extn_aptx_dec_set_license(adev);
+}
+
 void audio_extn_set_parameters(struct audio_device *adev,
                                struct str_parms *parms)
 {
@@ -764,9 +796,11 @@ void audio_extn_set_parameters(struct audio_device *adev,
    audio_extn_source_track_set_parameters(adev, parms);
    audio_extn_fbsp_set_parameters(parms);
    audio_extn_keep_alive_set_parameters(adev, parms);
-   check_and_set_hdmi_connection_status(parms);
+   audio_extn_ext_disp_set_parameters(adev, parms);
+   audio_extn_qaf_set_parameters(adev, parms);
    if (adev->offload_effects_set_parameters != NULL)
        adev->offload_effects_set_parameters(parms);
+   audio_extn_set_aptx_dec_bt_addr(adev, parms);
 }
 
 void audio_extn_get_parameters(const struct audio_device *adev,
@@ -782,6 +816,7 @@ void audio_extn_get_parameters(const struct audio_device *adev,
     audio_extn_hpx_get_parameters(query, reply);
     audio_extn_source_track_get_parameters(adev, query, reply);
     audio_extn_fbsp_get_parameters(query, reply);
+    audio_extn_sound_trigger_get_parameters(adev, query, reply);
     if (adev->offload_effects_get_parameters != NULL)
         adev->offload_effects_get_parameters(query, reply);
 
@@ -900,7 +935,6 @@ int audio_extn_parse_compress_metadata(struct stream_out *out,
     }
 
     else if (out->format == AUDIO_FORMAT_APE) {
-#ifdef APE_OFFLOAD_ENABLED
         ret = str_parms_get_str(parms, AUDIO_OFFLOAD_CODEC_APE_COMPATIBLE_VERSION, value, sizeof(value));
         if (ret >= 0) {
             out->compr_config.codec->options.ape.compatible_version = atoi(value);
@@ -965,22 +999,18 @@ int audio_extn_parse_compress_metadata(struct stream_out *out,
                 out->compr_config.codec->options.ape.num_channels,
                 out->compr_config.codec->options.ape.sample_rate,
                 out->compr_config.codec->options.ape.seek_table_present);
-#endif
     }
 
     else if (out->format == AUDIO_FORMAT_VORBIS) {
-#ifdef VORBIS_OFFLOAD_ENABLED
         ret = str_parms_get_str(parms, AUDIO_OFFLOAD_CODEC_VORBIS_BITSTREAM_FMT, value, sizeof(value));
         if (ret >= 0) {
         // transcoded bitstream mode
             out->compr_config.codec->options.vorbis_dec.bit_stream_fmt = (atoi(value) > 0) ? 1 : 0;
             out->is_compr_metadata_avail = true;
         }
-#endif
     }
 
     else if (out->format == AUDIO_FORMAT_WMA || out->format == AUDIO_FORMAT_WMA_PRO) {
-#ifdef WMA_OFFLOAD_ENABLED
         ret = str_parms_get_str(parms, AUDIO_OFFLOAD_CODEC_WMA_FORMAT_TAG, value, sizeof(value));
         if (ret >= 0) {
             out->compr_config.codec->format = atoi(value);
@@ -1031,7 +1061,6 @@ int audio_extn_parse_compress_metadata(struct stream_out *out,
                 out->compr_config.codec->options.wma.encodeopt,
                 out->compr_config.codec->options.wma.encodeopt1,
                 out->compr_config.codec->options.wma.encodeopt2);
-#endif
     }
 
     return ret;
@@ -1142,3 +1171,132 @@ void audio_extn_perf_lock_release(int *handle)
     }
 }
 #endif /* KPI_OPTIMIZE_ENABLED */
+
+static int audio_extn_set_multichannel_mask(struct audio_device *adev,
+                                            struct stream_in *in,
+                                            struct audio_config *config,
+                                            bool *channel_mask_updated)
+{
+    int ret = -EINVAL;
+    int channel_count = audio_channel_count_from_in_mask(in->channel_mask);
+    *channel_mask_updated = false;
+
+    int max_mic_count = platform_get_max_mic_count(adev->platform);
+    /* validate input params*/
+    if ((channel_count == 6) &&
+        (in->format == AUDIO_FORMAT_PCM_16_BIT)) {
+
+        switch (max_mic_count) {
+            case 4:
+                config->channel_mask = AUDIO_CHANNEL_INDEX_MASK_4;
+                break;
+            case 3:
+                config->channel_mask = AUDIO_CHANNEL_INDEX_MASK_3;
+                break;
+            case 2:
+                config->channel_mask = AUDIO_CHANNEL_IN_STEREO;
+                break;
+            default:
+                config->channel_mask = AUDIO_CHANNEL_IN_STEREO;
+                break;
+        }
+        ret = 0;
+        *channel_mask_updated = true;
+    }
+    return ret;
+}
+
+int audio_extn_check_and_set_multichannel_usecase(struct audio_device *adev,
+                                                  struct stream_in *in,
+                                                  struct audio_config *config,
+                                                  bool *update_params)
+{
+    bool ssr_supported = false;
+    ssr_supported = audio_extn_ssr_check_usecase(in);
+    if (ssr_supported) {
+        return audio_extn_ssr_set_usecase(in, config, update_params);
+    } else {
+        return audio_extn_set_multichannel_mask(adev, in, config,
+                                                update_params);
+    }
+}
+
+#ifdef APTX_DECODER_ENABLED
+static void audio_extn_aptx_dec_set_license(struct audio_device *adev)
+{
+    int ret, key = 0;
+    char value[128] = {0};
+    struct mixer_ctl *ctl;
+    const char *mixer_ctl_name = "APTX Dec License";
+
+    ctl = mixer_get_ctl_by_name(adev->mixer, mixer_ctl_name);
+    if (!ctl) {
+        ALOGE("%s: Could not get ctl for mixer cmd - %s",
+              __func__, mixer_ctl_name);
+        return;
+    }
+    key = platform_get_meta_info_key_from_list(adev->platform, "aptx");
+
+    ALOGD("%s Setting APTX License with key:0x%x",__func__, key);
+    ret = mixer_ctl_set_value(ctl, 0, key);
+    if (ret)
+        ALOGE("%s: cannot set license, error:%d",__func__, ret);
+}
+
+static void audio_extn_set_aptx_dec_bt_addr(struct audio_device *adev, struct str_parms *parms)
+{
+    int ret = 0;
+    char value[256];
+
+    ret = str_parms_get_str(parms, AUDIO_PARAMETER_APTX_DEC_BT_ADDR, value,
+                            sizeof(value));
+    if (ret >= 0) {
+        audio_extn_parse_aptx_dec_bt_addr(value);
+    }
+}
+
+int audio_extn_set_aptx_dec_params(struct aptx_dec_param *payload)
+{
+    struct aptx_dec_param *aptx_cfg = payload;
+
+    aextnmod.addr.nap = aptx_cfg->bt_addr.nap;
+    aextnmod.addr.uap = aptx_cfg->bt_addr.uap;
+    aextnmod.addr.lap = aptx_cfg->bt_addr.lap;
+}
+
+static void audio_extn_parse_aptx_dec_bt_addr(char *value)
+{
+    int ba[6];
+    char *str, *tok;
+    uint32_t addr[3];
+    int i = 0;
+
+    ALOGV("%s: value %s", __func__, value);
+    tok = strtok_r(value, ":", &str);
+    while (tok != NULL) {
+        ba[i] = strtol(tok, NULL, 16);
+        i++;
+        tok = strtok_r(NULL, ":", &str);
+    }
+    addr[0] = (ba[0] << 8) | ba[1];
+    addr[1] = ba[2];
+    addr[2] = (ba[3] << 16) | (ba[4] << 8) | ba[5];
+
+    aextnmod.addr.nap = addr[0];
+    aextnmod.addr.uap = addr[1];
+    aextnmod.addr.lap = addr[2];
+}
+
+void audio_extn_send_aptx_dec_bt_addr_to_dsp(struct stream_out *out)
+{
+    char mixer_ctl_name[128];
+    struct mixer_ctl *ctl;
+    uint32_t addr[3];
+
+    ALOGV("%s", __func__);
+    out->compr_config.codec->options.aptx_dec.nap = aextnmod.addr.nap;
+    out->compr_config.codec->options.aptx_dec.uap = aextnmod.addr.uap;
+    out->compr_config.codec->options.aptx_dec.lap = aextnmod.addr.lap;
+}
+
+#endif //APTX_DECODER_ENABLED

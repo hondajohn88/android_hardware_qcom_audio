@@ -21,6 +21,10 @@ LOCAL_SRC_FILES:= \
 
 LOCAL_CFLAGS+= -O2 -fvisibility=hidden
 
+ifneq ($(filter sdm660 msm8998,$(TARGET_BOARD_PLATFORM)),)
+    LOCAL_CFLAGS += -DCAPTURE_DEVICE=7
+endif
+
 LOCAL_SHARED_LIBRARIES := \
 	libcutils \
 	liblog \

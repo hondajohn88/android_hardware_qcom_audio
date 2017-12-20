@@ -222,7 +222,7 @@ int us_start(void)
 
     enable_snd_device(us->adev, SND_DEVICE_OUT_ULTRASOUND_HANDSET);
     enable_audio_route(us->adev, rx_usecase);
-    ALOGV("%s: Opening PCM playback device card_id(%d) device_id(%d)",
+    ALOGI("%s: Opening PCM playback device card_id(%d) device_id(%d)",
             __func__, us->adev->snd_card, rx_device_id);
     us->rx_pcm = pcm_open(us->adev->snd_card, rx_device_id, PCM_OUT, &pcm_config_us);
     if (us->rx_pcm && !pcm_is_ready(us->rx_pcm)) {
@@ -245,7 +245,7 @@ int us_start(void)
 
     enable_snd_device(us->adev, SND_DEVICE_IN_ULTRASOUND_MIC);
     enable_audio_route(us->adev, tx_usecase);
-    ALOGV("%s: Opening PCM capture device card_id(%d) device_id(%d)",
+    ALOGI("%s: Opening PCM capture device card_id(%d) device_id(%d)",
             __func__, us->adev->snd_card, tx_device_id);
     us->tx_pcm = pcm_open(us->adev->snd_card, tx_device_id, PCM_IN, &pcm_config_us);
     if (us->tx_pcm && !pcm_is_ready(us->tx_pcm)) {
@@ -315,3 +315,4 @@ int us_set_sensitivity(int value)
 
     return rc;
 }
+

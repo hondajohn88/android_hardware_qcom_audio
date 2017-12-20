@@ -8,7 +8,7 @@ LOCAL_ARM_MODE := arm
 
 AUDIO_PLATFORM := $(TARGET_BOARD_PLATFORM)
 
-ifneq ($(filter msm8974 msm8226 msm8610 apq8084 msm8994 msm8992 msm8996 msmcobalt,$(TARGET_BOARD_PLATFORM)),)
+ifneq ($(filter msm8974 msm8226 msm8610 apq8084 msm8994 msm8992 msm8996 msm8998,$(TARGET_BOARD_PLATFORM)),)
   # B-family platform uses msm8974 code base
   AUDIO_PLATFORM = msm8974
   MULTIPLE_HW_VARIANTS_ENABLED := true
@@ -30,19 +30,19 @@ endif
 ifneq ($(filter msm8996,$(TARGET_BOARD_PLATFORM)),)
   LOCAL_CFLAGS := -DPLATFORM_MSM8996
 endif
-ifneq ($(filter msmcobalt,$(TARGET_BOARD_PLATFORM)),)
-  LOCAL_CFLAGS := -DPLATFORM_MSMCOBALT
+ifneq ($(filter msm8998,$(TARGET_BOARD_PLATFORM)),)
+  LOCAL_CFLAGS := -DPLATFORM_MSM8998
 endif
 endif
 
-ifneq ($(filter msm8916 msm8909 msm8952 msm8937 thorium msm8953 msmgold msmfalcon,$(TARGET_BOARD_PLATFORM)),)
+ifneq ($(filter msm8916 msm8909 msm8952 msm8937 thorium msm8953 msmgold sdm660,$(TARGET_BOARD_PLATFORM)),)
   AUDIO_PLATFORM = msm8916
   MULTIPLE_HW_VARIANTS_ENABLED := true
   LOCAL_CFLAGS := -DPLATFORM_MSM8916
 ifneq ($(filter msm8909,$(TARGET_BOARD_PLATFORM)),)
   LOCAL_CFLAGS := -DPLATFORM_MSM8909
 endif
-ifneq ($(filter msmfalcon,$(TARGET_BOARD_PLATFORM)),)
+ifneq ($(filter sdm660,$(TARGET_BOARD_PLATFORM)),)
   LOCAL_CFLAGS := -DPLATFORM_MSMFALCON
 endif
 endif
@@ -77,6 +77,10 @@ endif
 
 ifeq ($(strip $(AUDIO_FEATURE_ENABLED_HIFI_AUDIO)),true)
     LOCAL_CFLAGS += -DHIFI_AUDIO_ENABLED
+endif
+
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_RAS)),true)
+    LOCAL_CFLAGS += -DRAS_ENABLED
 endif
 
 ifeq ($(strip $(AUDIO_FEATURE_ENABLED_VBAT_MONITOR)),true)
@@ -171,11 +175,6 @@ ifneq ($(strip $(DOLBY_DDP)),true)
 endif
 endif
 
-ifeq ($(strip $(AUDIO_FEATURE_ENABLED_FLAC_OFFLOAD)),true)
-    LOCAL_CFLAGS += -DFLAC_OFFLOAD_ENABLED
-    LOCAL_CFLAGS += -DCOMPRESS_METADATA_NEEDED
-endif
-
 ifeq ($(strip $(AUDIO_FEATURE_ENABLED_EXTN_FLAC_DECODER)),true)
     LOCAL_CFLAGS += -DFLAC_OFFLOAD_ENABLED
     LOCAL_CFLAGS += -DCOMPRESS_METADATA_NEEDED
@@ -253,16 +252,35 @@ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_SPLIT_A2DP)),true)
     LOCAL_SRC_FILES += audio_extn/a2dp.c
 endif
 
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_QAF)),true)
+    LOCAL_CFLAGS += -DQAF_EXTN_ENABLED
+    LOCAL_C_INCLUDES += $(TARGET_OUT_HEADERS)/mm-audio/qaf/
+    LOCAL_SRC_FILES += audio_extn/qaf.c
+endif
+
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_COMPRESS_INPUT)),true)
+    LOCAL_CFLAGS += -DCOMPRESS_INPUT_ENABLED
+    LOCAL_SRC_FILES += audio_extn/compress_in.c
+endif
+
+ifeq ($(strip $(BOARD_SUPPORTS_QAHW)),true)
+    LOCAL_CFLAGS += -DAUDIO_HW_EXTN_API_ENABLED
+    LOCAL_SRC_FILES += audio_hw_extn_api.c
+endif
+
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_BT_HAL)),true)
+    LOCAL_CFLAGS += -DAUDIO_EXTN_BT_HAL_ENABLED
+    LOCAL_SRC_FILES += audio_extn/bt_hal.c
+endif
+
 LOCAL_SHARED_LIBRARIES := \
 	liblog \
 	libcutils \
-	libhardware \
 	libtinyalsa \
 	libtinycompress \
 	libaudioroute \
 	libdl \
 	libaudioutils \
-	libhardware \
 	libexpat
 
 LOCAL_C_INCLUDES += \
@@ -270,7 +288,6 @@ LOCAL_C_INCLUDES += \
 	external/tinycompress/include \
 	system/media/audio_utils/include \
 	external/expat/lib \
-	hardware/libhardware/include \
 	$(call include-path-for, audio-route) \
 	$(call include-path-for, audio-effects) \
 	$(LOCAL_PATH)/$(AUDIO_PLATFORM) \
@@ -292,6 +309,14 @@ endif
 endif
 
 ifeq ($(strip $(BOARD_SUPPORTS_SOUND_TRIGGER)),true)
+    ST_FEATURE_ENABLE := true
+endif
+
+ifeq ($(strip $(BOARD_SUPPORTS_SOUND_TRIGGER_HAL)),true)
+    ST_FEATURE_ENABLE := true
+endif
+
+ifeq ($(ST_FEATURE_ENABLE), true)
     LOCAL_CFLAGS += -DSOUND_TRIGGER_ENABLED
     LOCAL_CFLAGS += -DSOUND_TRIGGER_PLATFORM_NAME=$(TARGET_BOARD_PLATFORM)
     LOCAL_C_INCLUDES += $(TARGET_OUT_HEADERS)/mm-audio/sound_trigger
@@ -309,9 +334,13 @@ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_PM_SUPPORT)),true)
     LOCAL_SHARED_LIBRARIES += libperipheral_client
 endif
 
-ifneq ($(strip $(AUDIO_FEATURE_ENABLED_EXT_AMPLIFIER)),false)
-    LOCAL_CFLAGS += -DEXT_AMPLIFIER_ENABLED
-    LOCAL_SRC_FILES += audio_extn/audio_amplifier.c
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_DISPLAY_PORT)),true)
+    LOCAL_CFLAGS += -DDISPLAY_PORT_ENABLED
+endif
+
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_GEF_SUPPORT)),true)
+    LOCAL_CFLAGS += -DAUDIO_GENERIC_EFFECT_FRAMEWORK_ENABLED
+    LOCAL_SRC_FILES += audio_extn/gef.c
 endif
 
 ifeq ($(strip $(AUDIO_FEATURE_ELLIPTIC_ULTRASOUND_SUPPORT)),true)
@@ -320,10 +349,14 @@ ifeq ($(strip $(AUDIO_FEATURE_ELLIPTIC_ULTRASOUND_SUPPORT)),true)
 endif
 
 LOCAL_CFLAGS += -Wall -Werror
-LOCAL_CLANG_CFLAGS += -Wno-unused-variable -Wno-unused-function -Wno-missing-field-initializers
 
 LOCAL_COPY_HEADERS_TO   := mm-audio
 LOCAL_COPY_HEADERS      := audio_extn/audio_defs.h
+
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_SND_MONITOR)), true)
+    LOCAL_CFLAGS += -DSND_MONITOR_ENABLED
+    LOCAL_SRC_FILES += audio_extn/sndmonitor.c
+endif
 
 LOCAL_MODULE := audio.primary.$(TARGET_BOARD_PLATFORM)
 

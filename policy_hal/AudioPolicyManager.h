@@ -25,15 +25,11 @@
 
 namespace android {
 #ifndef AUDIO_EXTN_FORMATS_ENABLED
-#ifndef WMA_OFFLOAD_ENABLED
 #define AUDIO_FORMAT_WMA 0x12000000UL
 #define AUDIO_FORMAT_WMA_PRO 0x13000000UL
-#endif
 #define AUDIO_FORMAT_FLAC 0x1B000000UL
 #define AUDIO_FORMAT_ALAC 0x1C000000UL
-#ifndef APE_OFFLOAD_ENABLED
 #define AUDIO_FORMAT_APE 0x1D000000UL
-#endif
 #endif
 
 #ifndef AAC_ADTS_OFFLOAD_ENABLED
@@ -100,6 +96,14 @@ protected:
         // see getDeviceForStrategy() for the use of fromCache parameter
         audio_devices_t getNewOutputDevice(const sp<AudioOutputDescriptor>& outputDesc,
                                            bool fromCache);
+
+        // avoid invalidation for active music stream on  previous outputs
+        // which is supported on the new device.
+        bool isInvalidationOfMusicStreamNeeded(routing_strategy strategy);
+
+        // Must be called before updateDevicesAndOutputs()
+        void checkOutputForStrategy(routing_strategy strategy);
+
         // returns true if given output is direct output
         bool isDirectOutput(audio_io_handle_t output);
 

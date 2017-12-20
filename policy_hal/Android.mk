@@ -41,7 +41,6 @@ LOCAL_STATIC_LIBRARIES := \
     libmedia_helper \
 
 LOCAL_CFLAGS += -Wall -Werror
-LOCAL_CLANG_CFLAGS += -Wno-overloaded-virtual -Wno-unused-variable -Wno-unused-private-field 
 
 ifeq ($(strip $(AUDIO_FEATURE_ENABLED_VOICE_CONCURRENCY)),true)
 LOCAL_CFLAGS += -DVOICE_CONCURRENCY
@@ -61,14 +60,6 @@ endif
 
 ifeq ($(strip $(AUDIO_FEATURE_ENABLED_EXTN_FORMATS)),true)
     LOCAL_CFLAGS += -DAUDIO_EXTN_FORMATS_ENABLED
-endif
-
-ifeq ($(strip $(AUDIO_FEATURE_ENABLED_WMA_OFFLOAD)),true)
-    LOCAL_CFLAGS += -DWMA_OFFLOAD_ENABLED
-endif
-
-ifeq ($(strip $(AUDIO_FEATURE_ENABLED_APE_OFFLOAD)),true)
-    LOCAL_CFLAGS += -DAPE_OFFLOAD_ENABLED
 endif
 
 ifeq ($(strip $(AUDIO_FEATURE_ENABLED_AAC_ADTS_OFFLOAD)),true)
