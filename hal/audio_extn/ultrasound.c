@@ -315,4 +315,3 @@ int us_set_sensitivity(int value)
 
     return rc;
 }
-
