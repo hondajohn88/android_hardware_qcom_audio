@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  * Not a contribution.
  *
  * Copyright (C) 2013 The Android Open Source Project
@@ -257,7 +257,7 @@ void *platform_init(struct audio_device *adev)
     my_data->fluence_in_voice_rec = false;
     my_data->fluence_type = FLUENCE_NONE;
 
-    property_get("ro.qc.sdk.audio.fluencetype", value, "");
+    property_get("ro.vendor.audio.sdk.fluencetype", value, "");
     if (!strncmp("fluencepro", value, sizeof("fluencepro"))) {
         my_data->fluence_type = FLUENCE_QUAD_MIC;
     } else if (!strncmp("fluence", value, sizeof("fluence"))) {
@@ -267,17 +267,17 @@ void *platform_init(struct audio_device *adev)
     }
 
     if (my_data->fluence_type != FLUENCE_NONE) {
-        property_get("persist.audio.fluence.voicecall",value,"");
+        property_get("persist.vendor.audio.fluence.voicecall",value,"");
         if (!strncmp("true", value, sizeof("true"))) {
             my_data->fluence_in_voice_call = true;
         }
 
-        property_get("persist.audio.fluence.voicerec",value,"");
+        property_get("persist.vendor.audio.fluence.voicerec",value,"");
         if (!strncmp("true", value, sizeof("true"))) {
             my_data->fluence_in_voice_rec = true;
         }
 
-        property_get("persist.audio.fluence.speaker",value,"");
+        property_get("persist.vendor.audio.fluence.speaker",value,"");
         if (!strncmp("true", value, sizeof("true"))) {
             my_data->fluence_in_spkr_mode = true;
         }
@@ -1148,13 +1148,15 @@ int platform_set_channel_map(void *platform __unused, int ch_count __unused,
 
 int platform_set_stream_channel_map(void *platform __unused,
                                     audio_channel_mask_t channel_mask __unused,
-                                    int snd_id __unused)
+                                    int snd_id __unused
+                                    uint8_t *input_channel_map __unused)
 {
     return -ENOSYS;
 }
 
 int platform_set_edid_channels_configuration(void *platform __unused,
-                                             int channels __unused)
+                                             int channels __unused,
+                                             int backend_idx __unused)
 {
     return 0;
 }
@@ -1259,30 +1261,21 @@ bool platform_check_backends_match(snd_device_t snd_device1 __unused,
 }
 
 int platform_send_audio_cal(void* platform __unused,
-        int acdb_dev_id __unused, int acdb_device_type __unused,
-        int app_type __unused, int topology_id __unused,
-        int sample_rate __unused, uint32_t module_id,
-        uint32_t param_id, void* data __unused,
+        acdb_audio_cal_cfg_t* cal __unused, void* data __unused,
         int length __unused, bool persist __unused)
 {
     return -ENOSYS;
 }
 
 int platform_get_audio_cal(void* platform __unused,
-        int acdb_dev_id __unused, int acdb_device_type __unused,
-        int app_type __unused, int topology_id __unused,
-        int sample_rate __unused, uint32_t module_id,
-        uint32_t param_id, void* data __unused,
+        acdb_audio_cal_cfg_t* cal __unused, void* data __unused,
         int* length __unused, bool persist __unused)
 {
     return -ENOSYS;
 }
 
 int platform_store_audio_cal(void* platform __unused,
-        int acdb_dev_id __unused, int acdb_device_type __unused,
-        int app_type __unused, int topology_id __unused,
-        int sample_rate __unused,  uint32_t module_id,
-        uint32_t param_id, void* data __unused,
+        acdb_audio_cal_cfg_t* cal __unused, void* data __unused,
         int length __unused)
 {
      return -ENOSYS;
@@ -1290,10 +1283,7 @@ int platform_store_audio_cal(void* platform __unused,
 
 
 int platform_retrieve_audio_cal(void* platform __unused,
-        int acdb_dev_id __unused, int acdb_device_type __unused,
-        int app_type __unused, int topology_id __unused,
-        int sample_rate __unused, uint32_t module_id,
-        uint32_t param_id, void* data __unused,
+        acdb_audio_cal_cfg_t* cal __unused, void* data __unused,
         int* length __unused)
 {
     return -ENOSYS;
@@ -1366,4 +1356,28 @@ int platform_set_acdb_metainfo_key(void *platform __unused, char *name __unused,
                                    int key __unused)
 {
     return 0;
+}
+
+int platform_get_mmap_data_fd(void *platform, int fe_dev, int dir, int *fd,
+                              uint32_t *size)
+{
+    return -ENOSYS;
+}
+
+bool platform_set_microphone_characteristic(void *platform __unused,
+                                            struct audio_microphone_characteristic_t mic __unused) {
+    return -ENOSYS;
+}
+
+int platform_get_microphones(void *platform __unused,
+                             struct audio_microphone_characteristic_t *mic_array __unused,
+                             size_t *mic_count __unused) {
+    return -ENOSYS;
+}
+
+int platform_get_active_microphones(void *platform __unused, unsigned int channels __unused,
+                                    audio_usecase_t usecase __unused,
+                                    struct audio_microphone_characteristic_t *mic_array __unused,
+                                    size_t *mic_count __unused) {
+    return -ENOSYS;
 }

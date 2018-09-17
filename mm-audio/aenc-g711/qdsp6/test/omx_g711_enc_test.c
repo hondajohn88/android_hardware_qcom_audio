@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010, 2014, 2016, The Linux Foundation. All rights reserved.
+Copyright (c) 2010, 2014, 2016-2017 The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -67,14 +67,6 @@ typedef unsigned int  uint16;
 QOMX_AUDIO_STREAM_INFO_DATA streaminfoparam;
 
 void Release_Encoder();
-
-#ifdef AUDIOV2
-unsigned short session_id;
-int device_id;
-int control = 0;
-const char *device="handset_tx";
-#define DIR_TX 2
-#endif
 
 #define MIN(A,B)    (((A) < (B))?(A):(B))
 
@@ -493,6 +485,10 @@ int main(int argc, char **argv)
     if (argc >= 5) {
       in_filename = argv[1];
       out_filename = argv[2];
+      if (in_filename == NULL || out_filename == NULL) {
+                DEBUG_PRINT("Invalid %s filename\n", in_filename ? "Output":"Input");
+                return 0;
+      }
       encode_format = (uint32_t)atoi(argv[3]);
       tunnel  = (uint32_t)atoi(argv[4]);
       rectime = (uint32_t)atoi(argv[5]);
@@ -923,7 +919,7 @@ static int open_audio_file ()
         if (inputBufferFile == NULL) {
             DEBUG_PRINT("\ni/p file %s could NOT be opened\n",
                                          in_filename);
-        error_code = -1;
+            return -1;
         }
         if(parse_pcm_header() != 0x00)
         {

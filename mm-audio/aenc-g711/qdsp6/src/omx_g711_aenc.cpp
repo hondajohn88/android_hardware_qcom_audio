@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010, 2014, 2016 The Linux Foundation. All rights reserved.
+Copyright (c) 2010, 2014, 2016-2018 The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -151,9 +151,14 @@ void omx_g711_aenc::wait_for_event()
     pthread_mutex_lock(&m_event_lock);
     while (0 == m_is_event_done)
     {
-       clock_gettime(CLOCK_REALTIME, &ts);
+       clock_gettime(CLOCK_MONOTONIC, &ts);
        ts.tv_sec += (SLEEP_MS/1000);
        ts.tv_nsec += ((SLEEP_MS%1000) * 1000000);
+       if (ts.tv_nsec >= 1000000000)
+       {
+          ts.tv_nsec -= 1000000000;
+          ts.tv_sec += 1;
+       }
        rc = pthread_cond_timedwait(&cond, &m_event_lock, &ts);
        if (rc == ETIMEDOUT && !m_is_event_done) {
             OMX_LOGV("Timed out waiting for flush");
@@ -297,6 +302,7 @@ omx_g711_aenc::omx_g711_aenc(): m_tmp_meta_buf(NULL),
 {
     int cond_ret = 0;
     component_Role.nSize = 0;
+    pthread_condattr_t attr;
     memset(&m_cmp, 0, sizeof(m_cmp));
     memset(&m_cb, 0, sizeof(m_cb));
     memset(&m_g711_pb_stats, 0, sizeof(m_g711_pb_stats));
@@ -344,7 +350,9 @@ omx_g711_aenc::omx_g711_aenc(): m_tmp_meta_buf(NULL),
     pthread_mutex_init(&in_buf_count_lock, &in_buf_count_lock_attr);
     updateLogLevel();
 
-    if ((cond_ret = pthread_cond_init (&cond, NULL)) != 0)
+    pthread_condattr_init(&attr);
+    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    if ((cond_ret = pthread_cond_init (&cond, &attr)) != 0)
     {
        OMX_LOGE("pthread_cond_init returns non zero for cond\n");
        if (cond_ret == EAGAIN)
@@ -1574,9 +1582,9 @@ OMX_ERRORTYPE  omx_g711_aenc::send_command_proxy(OMX_IN OMX_HANDLETYPE hComp,
             {
                 OMX_LOGV("SCP-->Executing to Idle \n");
                 if(pcm_input)
-                    execute_omx_flush(-1,false);
+                    execute_omx_flush(-1);
                 else
-                    execute_omx_flush(1,false);
+                    execute_omx_flush(1);
 
 
             } else if (OMX_StatePause == eState)
@@ -1650,9 +1658,9 @@ OMX_ERRORTYPE  omx_g711_aenc::send_command_proxy(OMX_IN OMX_HANDLETYPE hComp,
                 m_flush_cnt = 2;
                 pthread_mutex_unlock(&m_flush_lock);
                 if(pcm_input)
-                    execute_omx_flush(-1,false);
+                    execute_omx_flush(-1);
                 else
-                    execute_omx_flush(1,false);
+                    execute_omx_flush(1);
 
             } else if ( eState == OMX_StateLoaded )
             {
@@ -1771,7 +1779,7 @@ OMX_ERRORTYPE  omx_g711_aenc::send_command_proxy(OMX_IN OMX_HANDLETYPE hComp,
              param1 == OMX_CORE_OUTPUT_PORT_INDEX ||
             (signed)param1 == -1 )
         {
-            execute_omx_flush(param1);
+            execute_omx_flush(param1,true);
         } else
         {
             eRet = OMX_ErrorBadPortIndex;
@@ -3567,7 +3575,6 @@ OMX_ERRORTYPE  omx_g711_aenc::use_input_buffer
     OMX_ERRORTYPE         eRet = OMX_ErrorNone;
     OMX_BUFFERHEADERTYPE  *bufHdr;
     unsigned              nBufSize = MAX(bytes, input_buffer_size);
-    char                  *buf_ptr;
 
     if(hComp == NULL)
     {
@@ -3583,11 +3590,10 @@ OMX_ERRORTYPE  omx_g711_aenc::use_input_buffer
     }
     if (m_inp_current_buf_count < m_inp_act_buf_count)
     {
-        buf_ptr = (char *) calloc(sizeof(OMX_BUFFERHEADERTYPE), 1);
+        bufHdr = (OMX_BUFFERHEADERTYPE *) calloc(sizeof(OMX_BUFFERHEADERTYPE), 1);
 
-        if (buf_ptr != NULL)
+        if (bufHdr != NULL)
         {
-            bufHdr = (OMX_BUFFERHEADERTYPE *) buf_ptr;
             *bufferHdr = bufHdr;
             memset(bufHdr,0,sizeof(OMX_BUFFERHEADERTYPE));
 
@@ -3652,7 +3658,6 @@ OMX_ERRORTYPE  omx_g711_aenc::use_output_buffer
     OMX_ERRORTYPE         eRet = OMX_ErrorNone;
     OMX_BUFFERHEADERTYPE  *bufHdr;
     unsigned              nBufSize = MAX(bytes,output_buffer_size);
-    char                  *buf_ptr;
 
     if(hComp == NULL)
     {
@@ -3671,11 +3676,10 @@ OMX_ERRORTYPE  omx_g711_aenc::use_output_buffer
     if (m_out_current_buf_count < m_out_act_buf_count)
     {
 
-        buf_ptr = (char *) calloc(sizeof(OMX_BUFFERHEADERTYPE), 1);
+        bufHdr = (OMX_BUFFERHEADERTYPE *) calloc(sizeof(OMX_BUFFERHEADERTYPE), 1);
 
-        if (buf_ptr != NULL)
+        if (bufHdr != NULL)
         {
-            bufHdr = (OMX_BUFFERHEADERTYPE *) buf_ptr;
             OMX_LOGV("BufHdr=%p buffer=%p\n",bufHdr,buffer);
             *bufferHdr = bufHdr;
             memset(bufHdr,0,sizeof(OMX_BUFFERHEADERTYPE));
@@ -4016,6 +4020,9 @@ OMX_ERRORTYPE  omx_g711_aenc::empty_this_buffer_proxy
         }
         memcpy(data,&meta_in, meta_in.offsetVal);
         OMX_LOGV("meta_in.nFlags = 0x%8x\n",meta_in.nFlags);
+    } else {
+        DEBUG_PRINT_ERROR("temp meta is null buf\n");
+            return OMX_ErrorInsufficientResources;
     }
 
     memcpy(&data[sizeof(META_IN)],buffer->pBuffer,buffer->nFilledLen);
@@ -4304,9 +4311,9 @@ void  omx_g711_aenc::deinit_encoder()
                                                                 m_state);
         // Get back any buffers from driver
         if(pcm_input)
-            execute_omx_flush(-1,false);
+            execute_omx_flush(-1);
         else
-            execute_omx_flush(1,false);
+            execute_omx_flush(1);
         // force state change to loaded so that all threads can be exited
         pthread_mutex_lock(&m_state_lock);
         m_state = OMX_StateLoaded;

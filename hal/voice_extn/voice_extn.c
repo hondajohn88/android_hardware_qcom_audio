@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
  * Not a contribution.
  *
  * Copyright (C) 2013 The Android Open Source Project
@@ -24,9 +24,10 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <math.h>
-#include <cutils/log.h>
+#include <log/log.h>
 #include <cutils/str_parms.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <sound/voice_params.h>
 
 #include "audio_hw.h"
@@ -34,6 +35,12 @@
 #include "platform.h"
 #include "platform_api.h"
 #include "voice_extn.h"
+
+#ifdef DYNAMIC_LOG_ENABLED
+#include <log_xml_parser.h>
+#define LOG_MASK HAL_MOD_FILE_VOICE_EXTN
+#include <log_utils.h>
+#endif
 
 #define AUDIO_PARAMETER_KEY_VSID                "vsid"
 #define AUDIO_PARAMETER_KEY_CALL_STATE          "call_state"

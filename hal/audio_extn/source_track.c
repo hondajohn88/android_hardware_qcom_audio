@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -40,6 +40,12 @@
 #include "voice_extn.h"
 #include <stdlib.h>
 #include <cutils/str_parms.h>
+
+#ifdef DYNAMIC_LOG_ENABLED
+#include <log_xml_parser.h>
+#define LOG_MASK HAL_MOD_FILE_SRC_TRACK
+#include <log_utils.h>
+#endif
 
 #ifdef SOURCE_TRACKING_ENABLED
 /* Audio Paramater Key to identify the list of start angles.
@@ -139,6 +145,7 @@ static bool is_stt_supported_snd_device(snd_device_t snd_device)
     case SND_DEVICE_IN_HANDSET_DMIC_AEC_NS:
     case SND_DEVICE_IN_HANDSET_STEREO_DMIC:
     case SND_DEVICE_IN_HANDSET_QMIC:
+    case SND_DEVICE_IN_HANDSET_TMIC_FLUENCE_PRO:
     case SND_DEVICE_IN_VOICE_DMIC:
     case SND_DEVICE_IN_VOICE_REC_DMIC_FLUENCE:
     case SND_DEVICE_IN_HEADSET_MIC_FLUENCE:
@@ -149,12 +156,17 @@ static bool is_stt_supported_snd_device(snd_device_t snd_device)
     case SND_DEVICE_IN_SPEAKER_DMIC_AEC_NS_BROADSIDE:
     case SND_DEVICE_IN_SPEAKER_DMIC_AEC_BROADSIDE:
     case SND_DEVICE_IN_SPEAKER_DMIC_NS_BROADSIDE:
+    case SND_DEVICE_IN_SPEAKER_TMIC_AEC:
+    case SND_DEVICE_IN_SPEAKER_TMIC_NS:
+    case SND_DEVICE_IN_SPEAKER_TMIC_AEC_NS:
     case SND_DEVICE_IN_SPEAKER_QMIC_AEC:
     case SND_DEVICE_IN_SPEAKER_QMIC_NS:
     case SND_DEVICE_IN_SPEAKER_QMIC_AEC_NS:
     case SND_DEVICE_IN_VOICE_SPEAKER_DMIC:
     case SND_DEVICE_IN_VOICE_SPEAKER_DMIC_BROADSIDE:
+    case SND_DEVICE_IN_VOICE_SPEAKER_TMIC:
     case SND_DEVICE_IN_VOICE_SPEAKER_QMIC:
+    case SND_DEVICE_IN_HANDSET_GENERIC_QMIC:
         ret = true;
         break;
     default:

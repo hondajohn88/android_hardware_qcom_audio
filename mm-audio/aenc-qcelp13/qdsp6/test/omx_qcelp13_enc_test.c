@@ -1,6 +1,6 @@
 
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
+Copyright (c) 2010-2014, 2017-2018 The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -57,10 +57,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <pthread.h>
 #include "QOMX_AudioExtensions.h"
 #include "QOMX_AudioIndexExtensions.h"
-#ifdef AUDIOV2
-#include "control.h"
-#endif
-
+#include <errno.h>
 
 #include <linux/ioctl.h>
 
@@ -71,14 +68,6 @@ typedef unsigned int  uint16;
 QOMX_AUDIO_STREAM_INFO_DATA streaminfoparam;
 /* maximum ADTS frame header length                */
 void Release_Encoder();
-
-#ifdef AUDIOV2
-unsigned short session_id;
-int device_id;
-int control = 0;
-const char *device="handset_tx";
-#define DIR_TX 2
-#endif
 
 uint32_t samplerate = 8000;
 uint32_t channels = 1;
@@ -250,6 +239,12 @@ OMX_COMPONENTTYPE* qcelp13_enc_handle = 0;
 OMX_BUFFERHEADERTYPE  **pInputBufHdrs = NULL;
 OMX_BUFFERHEADERTYPE  **pOutputBufHdrs = NULL;
 
+typedef enum {
+    UINTMAX = 1,
+    UCHARMAX,
+    USHRTMAX
+}datatype;
+
 /************************************************************************/
 /*                GLOBAL FUNC DECL                        */
 /************************************************************************/
@@ -281,6 +276,71 @@ static OMX_ERRORTYPE FillBufferDone(OMX_IN OMX_HANDLETYPE hComponent,
                                      OMX_IN OMX_PTR pAppData,
                                      OMX_IN OMX_BUFFERHEADERTYPE* pBuffer);
 static OMX_ERRORTYPE  parse_pcm_header();
+
+int get_input_and_validate(char *input, datatype type)
+{
+    unsigned long int value = 0;
+    char *ptr = NULL;
+    int status = 0;
+
+    errno = 0;
+
+    if (input == NULL){
+        DEBUG_PRINT("No input is given\n");
+        status = -1;
+        goto exit;
+    }
+    ptr = (char *)malloc(strlen(input) + 1);
+    if (ptr == NULL) {
+        DEBUG_PRINT("Low memory\n");
+        status = -1;
+        goto exit;
+    }
+    /* Check for negative input */
+    if (*input == '-') {
+        DEBUG_PRINT("Negative Number is not allowed\n");
+        status = -1;
+        goto exit;
+    }
+    /* Convert string to unsigned long int */
+    value = strtoul(input, &ptr, 10);
+    if (errno != 0){
+        perror("strtoul");
+        status = errno;
+        goto exit;
+    }
+    /* check if number input is zero or string or string##number or viceversa */
+    if (value == 0 || *ptr != '\0'){
+        DEBUG_PRINT("Input is string+number or Zero or string = %s\n", input);
+        status = -1;
+        goto exit;
+    }
+    /* check for out of range */
+    switch(type) {
+    case 1 :if (value > UINT_MAX) {
+                DEBUG_PRINT("Input is Out of range\n");
+                status = -1;
+            }
+            break;
+    case 2 :if (value > UCHAR_MAX) {
+                DEBUG_PRINT("Input is Out of range\n");
+                status = -1;
+            }
+            break;
+    case 3 :if (value > USHRT_MAX) {
+                DEBUG_PRINT("Input is Out of range\n");
+                status = -1;
+            }
+            break;
+    }
+exit:
+    if (ptr != NULL)
+        free(ptr);
+    if (status != 0)
+        exit(0);
+    return value;
+}
+
 void wait_for_event(void)
 {
     pthread_mutex_lock(&lock);
@@ -556,13 +616,17 @@ int main(int argc, char **argv)
 
     if (argc >= 9) {
         in_filename = argv[1];
-          out_filename = argv[2];
-    tunnel =  (uint32_t)atoi(argv[3]);
+        out_filename = argv[2];
+	if (in_filename == NULL || out_filename == NULL) {
+                DEBUG_PRINT("Invalid %s filename\n", in_filename ? "Output":"Input");
+                return 0;
+        }
+	tunnel =  (uint32_t)atoi(argv[3]);
         min_bitrate  = (uint32_t)atoi(argv[4]);
         max_bitrate  = (uint32_t)atoi(argv[5]);
         cdmarate     = (uint32_t)atoi(argv[6]);
         recpath      = (uint32_t)atoi(argv[7]); // No configuration support yet..
-        rectime      = (uint32_t)atoi(argv[8]);
+        rectime      = (uint32_t)get_input_and_validate(argv[8], UINTMAX);
 
     } else {
           DEBUG_PRINT(" invalid format: \n");
@@ -642,22 +706,6 @@ int main(int argc, char **argv)
             }
 
             /* Deinit OpenMAX */
-        if(tunnel)
-        {
-            #ifdef AUDIOV2
-            if (msm_route_stream(DIR_TX,session_id,device_id, 0))
-            {
-                DEBUG_PRINT("\ncould not set stream routing\n");
-                return -1;
-            }
-            if (msm_en_device(device_id, 0))
-            {
-                DEBUG_PRINT("\ncould not enable device\n");
-                return -1;
-            }
-            msm_mixer_close();
-            #endif
-        }
             OMX_Deinit();
             ebd_cnt=0;
             bOutputEosReached = false;
@@ -837,27 +885,6 @@ int Play_Encoder()
     OMX_SetParameter(qcelp13_enc_handle,OMX_IndexParamAudioQcelp13,&qcelp13param);
     OMX_GetExtensionIndex(qcelp13_enc_handle,"OMX.Qualcomm.index.audio.sessionId",&index);
     OMX_GetParameter(qcelp13_enc_handle,index,&streaminfoparam);
-    if(tunnel) {
-    #ifdef AUDIOV2
-    session_id = streaminfoparam.sessionId;
-    control = msm_mixer_open("/dev/snd/controlC0", 0);
-    if(control < 0)
-    printf("ERROR opening the device\n");
-    device_id = msm_get_device(device);
-    DEBUG_PRINT ("\ndevice_id = %d\n",device_id);
-    DEBUG_PRINT("\nsession_id = %d\n",session_id);
-    if (msm_en_device(device_id, 1))
-    {
-        perror("could not enable device\n");
-        return -1;
-    }
-    if (msm_route_stream(DIR_TX,session_id,device_id, 1))
-    {
-        perror("could not set stream routing\n");
-        return -1;
-    }
-    #endif
-    }
 
     DEBUG_PRINT ("\nOMX_SendCommand Encoder -> IDLE\n");
     OMX_SendCommand(qcelp13_enc_handle, OMX_CommandStateSet, OMX_StateIdle,0);
@@ -1042,7 +1069,7 @@ static int open_audio_file ()
         if (inputBufferFile == NULL) {
             DEBUG_PRINT("\ni/p file %s could NOT be opened\n",
                                          in_filename);
-        error_code = -1;
+            return -1;
         }
         if(parse_pcm_header() != 0x00)
         {

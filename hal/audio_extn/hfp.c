@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -39,6 +39,12 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.*/
 #include <stdlib.h>
 #include <cutils/str_parms.h>
 
+#ifdef DYNAMIC_LOG_ENABLED
+#include <log_xml_parser.h>
+#define LOG_MASK HAL_MOD_FILE_HFP
+#include <log_utils.h>
+#endif
+
 #ifdef HFP_ENABLED
 #define AUDIO_PARAMETER_HFP_ENABLE      "hfp_enable"
 #define AUDIO_PARAMETER_HFP_SET_SAMPLING_RATE "hfp_set_sampling_rate"
@@ -49,7 +55,7 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.*/
 #define HFP_RX_VOLUME     "SEC AUXPCM LOOPBACK Volume"
 #elif defined PLATFORM_MSM8996
 #define HFP_RX_VOLUME     "PRI AUXPCM LOOPBACK Volume"
-#elif defined (PLATFORM_MSM8998) || defined (PLATFORM_MSMFALCON)
+#elif defined (PLATFORM_MSM8998) || defined (PLATFORM_MSMFALCON) || defined (PLATFORM_SDM845) || defined (PLATFORM_SDM710) || defined (PLATFORM_QCS605) || defined (PLATFORM_MSMNILE) || defined (PLATFORM_MSMSTEPPE)
 #define HFP_RX_VOLUME     "SLIMBUS_7 LOOPBACK Volume"
 #else
 #define HFP_RX_VOLUME     "Internal HFP RX Volume"
@@ -306,7 +312,7 @@ int hfp_set_mic_mute(struct audio_device *adev, bool state)
 {
     struct mixer_ctl *ctl;
     const char *mixer_ctl_name = "HFP TX Mute";
-    uint32_t set_values[ ] = {0};
+    long set_values[ ] = {0};
 
     ALOGI("%s: enter, state=%d", __func__, state);
 

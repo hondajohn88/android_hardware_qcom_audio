@@ -8,7 +8,7 @@ LOCAL_ARM_MODE := arm
 
 AUDIO_PLATFORM := $(TARGET_BOARD_PLATFORM)
 
-ifneq ($(filter msm8974 msm8226 msm8610 apq8084 msm8994 msm8992 msm8996 msm8998,$(TARGET_BOARD_PLATFORM)),)
+ifneq ($(filter msm8974 msm8226 msm8610 apq8084 msm8994 msm8992 msm8996 msm8998 apq8098_latv sdm845 sdm710 qcs605 msmnile $(MSMSTEPPE),$(TARGET_BOARD_PLATFORM)),)
   # B-family platform uses msm8974 code base
   AUDIO_PLATFORM = msm8974
   MULTIPLE_HW_VARIANTS_ENABLED := true
@@ -30,8 +30,23 @@ endif
 ifneq ($(filter msm8996,$(TARGET_BOARD_PLATFORM)),)
   LOCAL_CFLAGS := -DPLATFORM_MSM8996
 endif
-ifneq ($(filter msm8998,$(TARGET_BOARD_PLATFORM)),)
+ifneq ($(filter msm8998 apq8098_latv,$(TARGET_BOARD_PLATFORM)),)
   LOCAL_CFLAGS := -DPLATFORM_MSM8998
+endif
+ifneq ($(filter sdm845,$(TARGET_BOARD_PLATFORM)),)
+  LOCAL_CFLAGS := -DPLATFORM_SDM845
+endif
+ifneq ($(filter sdm710,$(TARGET_BOARD_PLATFORM)),)
+  LOCAL_CFLAGS := -DPLATFORM_SDM710
+endif
+ifneq ($(filter qcs605,$(TARGET_BOARD_PLATFORM)),)
+  LOCAL_CFLAGS := -DPLATFORM_QCS605
+endif
+ifneq ($(filter msmnile,$(TARGET_BOARD_PLATFORM)),)
+  LOCAL_CFLAGS := -DPLATFORM_MSMNILE
+endif
+ifneq ($(filter $(MSMSTEPPE) ,$(TARGET_BOARD_PLATFORM)),)
+  LOCAL_CFLAGS := -DPLATFORM_MSMSTEPPE
 endif
 endif
 
@@ -47,16 +62,30 @@ ifneq ($(filter sdm660,$(TARGET_BOARD_PLATFORM)),)
 endif
 endif
 
+LOCAL_CFLAGS += -Wno-macro-redefined
+
+LOCAL_HEADER_LIBRARIES := libhardware_headers
+
 LOCAL_SRC_FILES := \
 	audio_hw.c \
 	voice.c \
 	platform_info.c \
-	$(AUDIO_PLATFORM)/platform.c
+	$(AUDIO_PLATFORM)/platform.c \
+        acdb.c
 
 LOCAL_SRC_FILES += audio_extn/audio_extn.c \
                    audio_extn/utils.c
 LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
+LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/techpack/audio/include
 LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
+
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_DLKM)),true)
+  LOCAL_HEADER_LIBRARIES += audio_kernel_headers
+  LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/vendor/qcom/opensource/audio-kernel/include
+  LOCAL_ADDITIONAL_DEPENDENCIES += $(BOARD_VENDOR_KERNEL_MODULES)
+endif
+
+LOCAL_CFLAGS += -DUSE_VENDOR_EXTN
 
 ifeq ($(strip $(AUDIO_FEATURE_ENABLED_HDMI_EDID)),true)
     LOCAL_CFLAGS += -DHDMI_EDID
@@ -175,6 +204,11 @@ ifneq ($(strip $(DOLBY_DDP)),true)
 endif
 endif
 
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_FLAC_OFFLOAD)),true)
+    LOCAL_CFLAGS += -DFLAC_OFFLOAD_ENABLED
+    LOCAL_CFLAGS += -DCOMPRESS_METADATA_NEEDED
+endif
+
 ifeq ($(strip $(AUDIO_FEATURE_ENABLED_EXTN_FLAC_DECODER)),true)
     LOCAL_CFLAGS += -DFLAC_OFFLOAD_ENABLED
     LOCAL_CFLAGS += -DCOMPRESS_METADATA_NEEDED
@@ -252,6 +286,11 @@ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_SPLIT_A2DP)),true)
     LOCAL_SRC_FILES += audio_extn/a2dp.c
 endif
 
+ifeq ($(strip $(AUDIO_FEATURE_IP_HDLR_ENABLED)),true)
+    LOCAL_CFLAGS += -DAUDIO_EXTN_IP_HDLR_ENABLED
+    LOCAL_SRC_FILES += audio_extn/ip_hdlr_intf.c
+endif
+
 ifeq ($(strip $(AUDIO_FEATURE_ENABLED_QAF)),true)
     LOCAL_CFLAGS += -DQAF_EXTN_ENABLED
     LOCAL_C_INCLUDES += $(TARGET_OUT_HEADERS)/mm-audio/qaf/
@@ -277,7 +316,7 @@ LOCAL_SHARED_LIBRARIES := \
 	liblog \
 	libcutils \
 	libtinyalsa \
-	libtinycompress \
+	libtinycompress_vendor \
 	libaudioroute \
 	libdl \
 	libaudioutils \
@@ -298,6 +337,11 @@ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_LISTEN)),true)
     LOCAL_CFLAGS += -DAUDIO_LISTEN_ENABLED
     LOCAL_C_INCLUDES += $(TARGET_OUT_HEADERS)/mm-audio/audio-listen
     LOCAL_SRC_FILES += audio_extn/listen.c
+endif
+
+ifeq ($(TARGET_COMPILE_WITH_MSM_KERNEL),true)
+        LOCAL_C_INCLUDES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/techpack/audio/include
+        LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
 endif
 
 ifeq ($(strip $(AUDIO_FEATURE_ENABLED_EXT_HDMI)),true)
@@ -343,12 +387,45 @@ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_GEF_SUPPORT)),true)
     LOCAL_SRC_FILES += audio_extn/gef.c
 endif
 
+ifeq ($(strip $($AUDIO_FEATURE_ADSP_HDLR_ENABLED)),true)
+    LOCAL_CFLAGS += -DAUDIO_EXTN_ADSP_HDLR_ENABLED
+    LOCAL_SRC_FILES += audio_extn/adsp_hdlr.c
+endif
+
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_DYNAMIC_LOG)), true)
+    LOCAL_CFLAGS += -DDYNAMIC_LOG_ENABLED
+    LOCAL_C_INCLUDES += $(TARGET_OUT_HEADERS)/mm-audio/audio-log-utils
+    LOCAL_SHARED_LIBRARIES += libaudio_log_utils
+endif
+
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_DYNAMIC_ECNS)),true)
+    LOCAL_CFLAGS += -DDYNAMIC_ECNS_ENABLED
+endif
+
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_INSTANCE_ID)), true)
+    LOCAL_CFLAGS += -DINSTANCE_ID_ENABLED
+endif
+
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_USB_BURST_MODE)), true)
+    LOCAL_CFLAGS += -DUSB_BURST_MODE_ENABLED
+endif
+
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_BATTERY_LISTENER)), true)
+    LOCAL_CFLAGS += -DBATTERY_LISTENER_ENABLED
+    LOCAL_SRC_FILES += audio_extn/battery_listener.cpp
+    LOCAL_SHARED_LIBRARIES += android.hardware.health@1.0 android.hardware.health@2.0 \
+                              libhidltransport libbase libhidlbase libhwbinder \
+                              libutils android.hardware.power@1.2
+    LOCAL_STATIC_LIBRARIES := libhealthhalutils
+endif
+
 ifeq ($(strip $(AUDIO_FEATURE_ELLIPTIC_ULTRASOUND_SUPPORT)),true)
     LOCAL_CFLAGS += -DELLIPTIC_ULTRASOUND_ENABLED
     LOCAL_SRC_FILES += audio_extn/ultrasound.c
 endif
 
 LOCAL_CFLAGS += -Wall -Werror
+LOCAL_CLANG_CFLAGS += -Wno-unused-variable -Wno-unused-function -Wno-missing-field-initializers
 
 LOCAL_COPY_HEADERS_TO   := mm-audio
 LOCAL_COPY_HEADERS      := audio_extn/audio_defs.h
@@ -358,12 +435,33 @@ ifeq ($(strip $(AUDIO_FEATURE_ENABLED_SND_MONITOR)), true)
     LOCAL_SRC_FILES += audio_extn/sndmonitor.c
 endif
 
+ifeq ($(strip $(AUDIO_FEATURE_ENABLED_PERF_HINTS)), true)
+LOCAL_SHARED_LIBRARIES += libbase libhidlbase libhwbinder libutils android.hardware.power@1.2 liblog
+LOCAL_SRC_FILES += audio_perf.cpp
+LOCAL_CFLAGS += -DPERF_HINTS_ENABLED
+endif
+
+LOCAL_HEADER_LIBRARIES += libhardware_headers
+
 LOCAL_MODULE := audio.primary.$(TARGET_BOARD_PLATFORM)
 
 LOCAL_MODULE_RELATIVE_PATH := hw
 
 LOCAL_MODULE_TAGS := optional
 
+LOCAL_VENDOR_MODULE := true
+
 include $(BUILD_SHARED_LIBRARY)
+
+LOCAL_CFLAGS += -Wno-unused-variable
+LOCAL_CFLAGS += -Wno-sign-compare
+LOCAL_CFLAGS += -Wno-unused-parameter
+LOCAL_CFLAGS += -Wno-unused-label
+LOCAL_CFLAGS += -Wno-gnu-designator
+LOCAL_CFLAGS += -Wno-typedef-redefinition
+LOCAL_CFLAGS += -Wno-shorten-64-to-32
+LOCAL_CFLAGS += -Wno-tautological-compare
+LOCAL_CFLAGS += -Wno-unused-function
+LOCAL_CFLAGS += -Wno-unused-local-typedef
 
 endif

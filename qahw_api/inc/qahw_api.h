@@ -16,8 +16,8 @@
  * limitations under the License.
  */
 
-#ifndef QTI_AUDIO_HAL_API_H
-#define QTI_AUDIO_HAL_API_H
+#ifndef QTI_AUDIO_QAHW_API_H
+#define QTI_AUDIO_QAHW_API_H
 
 #include <stdint.h>
 #include <strings.h>
@@ -61,6 +61,7 @@ __BEGIN_DECLS
 
 typedef void qahw_module_handle_t;
 typedef void qahw_stream_handle_t;
+typedef void (*audio_error_callback)(void* context);
 
 /**************************************/
 /* Output stream specific APIs **/
@@ -140,6 +141,16 @@ int qahw_out_set_parameters(qahw_stream_handle_t *stream, const char*kv_pairs);
  */
 char* qahw_out_get_parameters(const qahw_stream_handle_t *stream,
                                const char *keys);
+
+/* API to set playback stream specific config parameters */
+int qahw_out_set_param_data(qahw_stream_handle_t *out_handle,
+                            qahw_param_id param_id,
+                            qahw_param_payload *payload);
+
+/* API to get playback stream specific config parameters */
+int qahw_out_get_param_data(qahw_stream_handle_t *out_handle,
+                            qahw_param_id param_id,
+                            qahw_param_payload *payload);
 
 /*
  * Return the audio hardware driver estimated latency in milliseconds.
@@ -269,7 +280,6 @@ int qahw_open_input_stream(qahw_module_handle_t *hw_module,
                            audio_source_t source);
 
 int qahw_close_input_stream(qahw_stream_handle_t *in_handle);
-
 
 /*
  * Return the sampling rate in Hz - eg. 44100.
@@ -435,6 +445,35 @@ int qahw_set_param_data(const qahw_module_handle_t *hw_module,
                         qahw_param_id param_id,
                         qahw_param_payload *payload);
 
+/* Creates an audio patch between several source and sink ports.
+ * The handle is allocated by the HAL and should be unique for this
+ * audio HAL module.
+ */
+int qahw_create_audio_patch(qahw_module_handle_t *hw_module,
+                        unsigned int num_sources,
+                        const struct audio_port_config *sources,
+                        unsigned int num_sinks,
+                        const struct audio_port_config *sinks,
+                        audio_patch_handle_t *handle);
+
+/* Release an audio patch */
+int qahw_release_audio_patch(qahw_module_handle_t *hw_module,
+                        audio_patch_handle_t handle);
+/* Fills the list of supported attributes for a given audio port.
+ * As input, "port" contains the information (type, role, address etc...)
+ * needed by the HAL to identify the port.
+ * As output, "port" contains possible attributes (sampling rates, formats,
+ * channel masks, gain controllers...) for this port.
+ */
+int qahw_get_audio_port(qahw_module_handle_t *hw_module,
+                      struct audio_port *port);
+
+/* Set audio port configuration */
+int qahw_set_audio_port_config(qahw_module_handle_t *hw_module,
+                     const struct audio_port_config *config);
+
+void qahw_register_qas_death_notify_cb(audio_error_callback cb, void* context);
+
 __END_DECLS
 
-#endif  // QTI_AUDIO_HAL_API_H
+#endif  // QTI_AUDIO_QAHW_API_H

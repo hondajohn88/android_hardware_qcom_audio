@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  * Not a Contribution.
  *
  * Copyright (C) 2015 The Android Open Source Project *
@@ -34,6 +34,7 @@
 #define nullptr NULL
 #define LATENCY_NODE "/sys/kernel/debug/audio_in_latency_measurement_node"
 #define LATENCY_NODE_INIT_STR "1"
+#define MAX_RECORD_SESSIONS 6
 
 static bool kpi_mode;
 FILE * log_file = NULL;
@@ -73,7 +74,7 @@ struct audio_config_params {
     double record_delay;
     double record_length;
     char profile[50];
-    bool bt_wbs;
+    char kvpairs[256];
 };
 
 struct timed_params {
@@ -89,12 +90,46 @@ static volatile int tests_completed;
 int sourcetrack_done = 0;
 static pthread_mutex_t sourcetrack_lock;
 struct qahw_sound_focus_param sound_focus_data;
+void *context = NULL;
+
+static bool request_wake_lock(bool wakelock_acquired, bool enable)
+{
+   int system_ret;
+
+   if (enable) {
+       if (!wakelock_acquired) {
+           system_ret = system("echo audio_services > /sys/power/wake_lock");
+           if (system_ret < 0) {
+               fprintf(stderr, "%s.Failed to acquire audio_service lock\n", __func__);
+               fprintf(log_file, "%s.Failed to acquire audio_service lock\n", __func__);
+           } else {
+               wakelock_acquired = true;
+               fprintf(log_file, "%s.Success to acquire audio_service lock\n", __func__);
+           }
+       } else
+            fprintf(log_file, "%s.Lock is already acquired\n", __func__);
+   }
+
+   if (!enable) {
+       if (wakelock_acquired) {
+           system_ret = system("echo audio_services > /sys/power/wake_unlock");
+           if (system_ret < 0) {
+               fprintf(stderr, "%s.Failed to release audio_service lock\n", __func__);
+               fprintf(log_file, "%s.Failed to release audio_service lock\n", __func__);
+           } else {
+               wakelock_acquired = false;
+               fprintf(log_file, "%s.Success to release audio_service lock\n", __func__);
+           }
+       } else
+            fprintf(log_file, "%s.No Lock is acquired to release\n", __func__);
+   }
+   return wakelock_acquired;
+}
 
 void stop_signal_handler(int signal __unused)
 {
    stop_record = true;
 }
-
 
 void read_soundfocus_param(void)
 {
@@ -214,7 +249,9 @@ void *start_input(void *thread_param)
 {
   int rc = 0, ret = 0, count = 0;
   FILE *fdLatencyNode = nullptr;
-  struct timespec tsColdI, tsColdF, tsCont;
+  struct timespec tsColdI = { 0, 0 };
+  struct timespec tsColdF = { 0, 0 };
+  struct timespec tsCont = { 0, 0 };
   uint64_t tCold, tCont, tsec, tusec;
   char latencyBuf[200] = {0};
   time_t start_time = time(0);
@@ -244,6 +281,14 @@ void *start_input(void *thread_param)
       if (log_file != stdout)
           fprintf(stdout, "ERROR :::: channle count %d not supported, handle(%d)", params->channels, params->handle);
       pthread_exit(0);
+  }
+
+  /* Turn BT_SCO on if bt_sco recording */
+  if(audio_is_bluetooth_sco_device(params->input_device)) {
+      int ret = -1;
+      const char * bt_sco_on = "BT_SCO=on";
+      ret = qahw_set_parameters(qahw_mod_handle, bt_sco_on);
+      fprintf(log_file, " param %s set to hal with return value %d\n", bt_sco_on, ret);
   }
 
   /* setup debug node if in kpi mode */
@@ -296,9 +341,12 @@ void *start_input(void *thread_param)
   strlcat(param, params->profile, sizeof(param));
   qahw_in_set_parameters(in_handle, param);
 
-  fprintf(log_file, "\n Please speak into the microphone for %lf seconds, handle(%d)\n", params->record_length, params->handle);
+  /* Caution: Below ADL log shouldnt be altered without notifying automation APT since it used for
+   * automation testing
+   */
+  fprintf(log_file, "\n ADL: Please speak into the microphone for %lf seconds, handle(%d)\n", params->record_length, params->handle);
   if (log_file != stdout)
-      fprintf(stdout, "\n Please speak into the microphone for %lf seconds, handle(%d)\n", params->record_length, params->handle);
+      fprintf(stdout, "\n ADL: Please speak into the microphone for %lf seconds, handle(%d)\n", params->record_length, params->handle);
 
   snprintf(file_name + name_len, sizeof(file_name) - name_len, "%d.wav", (0x99A - params->handle));
   FILE *fd = fopen(file_name,"w");
@@ -306,6 +354,7 @@ void *start_input(void *thread_param)
       fprintf(log_file, "File open failed \n");
       if (log_file != stdout)
           fprintf(stdout, "File open failed \n");
+      free(buffer);
       test_end();
       pthread_exit(0);
   }
@@ -355,7 +404,7 @@ void *start_input(void *thread_param)
       }
 
       if (kpi_mode && count == 0) {
-          ret = clock_gettime(CLOCK_REALTIME, &tsColdI);
+          ret = clock_gettime(CLOCK_MONOTONIC, &tsColdI);
           if (ret)
               fprintf(log_file, "error(%d) getting current time before first read!, handle(%d)", ret, params->handle);
       }
@@ -366,14 +415,14 @@ void *start_input(void *thread_param)
 
       if (kpi_mode) {
           if (count == 0) {
-              ret = clock_gettime(CLOCK_REALTIME, &tsColdF);
+              ret = clock_gettime(CLOCK_MONOTONIC, &tsColdF);
               if (ret)
                   fprintf(log_file, "error(%d) getting current time after first read!, handle(%d)", ret, params->handle);
           } else if (count == 8) {
           /* 8th read done time is captured in kernel which would have trigger 9th read in DSP
            * 9th read is received by usersace at this time
            */
-              ret = clock_gettime(CLOCK_REALTIME, &tsCont);
+              ret = clock_gettime(CLOCK_MONOTONIC, &tsCont);
               if (ret)
                   fprintf(log_file, "error(%d) getting current time after 8th read!, handle(%d)", ret, params->handle);
           }
@@ -396,6 +445,7 @@ void *start_input(void *thread_param)
   hdr.riff_sz = data_sz + 44 - 8;
   fseek(fd, 0, SEEK_SET);
   fwrite(&hdr, 1, sizeof(hdr), fd);
+  free(buffer);
   fclose(fd);
 
   /* capture latency kpis if required */
@@ -406,7 +456,7 @@ void *start_input(void *thread_param)
       fread((void *) latencyBuf, 100, 1, fdLatencyNode);
       fclose(fdLatencyNode);
       sscanf(latencyBuf, " %llu,%llu", &tsec, &tusec);
-      tCont = tsCont.tv_sec*1000 - tsec*1000 + tsCont.tv_nsec/1000000 - tusec/1000;
+      tCont = ((uint64_t)tsCont.tv_sec)*1000 - tsec*1000 + ((uint64_t)tsCont.tv_nsec)/1000000 - tusec/1000;
       if (log_file != stdout) {
           fprintf(stdout, "\n cold latency %llums, continuous latency %llums, handle(%d)\n", tCold, tCont, params->handle);
           fprintf(stdout, " **Note: please add DSP Pipe/PP latency numbers to this, for final latency values\n");
@@ -418,7 +468,6 @@ void *start_input(void *thread_param)
 
   fprintf(log_file, " closing input, handle(%d)", params->handle);
   printf("closing input");
-  fclose(fd);
 
   /* Close input stream and device. */
   rc = qahw_in_standby(in_handle);
@@ -435,14 +484,17 @@ void *start_input(void *thread_param)
           fprintf(stdout, "could not close input stream %d, handle(%d)\n",rc, params->handle);
   }
 
-  /* Print instructions to access the file. */
-  fprintf(log_file, "\n\n The audio recording has been saved to %s. Please use adb pull to get "
+  /* Print instructions to access the file.
+   * Caution: Below ADL log shouldnt be altered without notifying automation APT since it used for
+   * automation testing
+   */
+  fprintf(log_file, "\n\n ADL: The audio recording has been saved to %s. Please use adb pull to get "
          "the file and play it using audacity. The audio data has the "
          "following characteristics:\n Sample rate: %i\n Format: %d\n "
          "Num channels: %i, handle(%d)\n\n",
          file_name, params->config.sample_rate, params->config.format, params->channels, params->handle);
   if (log_file != stdout)
-      fprintf(stdout, "\n\n The audio recording has been saved to %s. Please use adb pull to get "
+      fprintf(stdout, "\n\n ADL: The audio recording has been saved to %s. Please use adb pull to get "
          "the file and play it using audacity. The audio data has the "
          "following characteristics:\n Sample rate: %i\n Format: %d\n "
          "Num channels: %i, handle(%d)\n\n",
@@ -496,15 +548,7 @@ void fill_default_params(struct audio_config_params *thread_param, int rec_sessi
     thread_param->record_length = 8 /*sec*/;
     thread_param->record_delay = 0 /*sec*/;
 
-    if (rec_session == 1) {
-        thread_param->handle = 0x999;
-    } else if (rec_session == 2) {
-        thread_param->handle = 0x998;
-    } else if (rec_session == 3) {
-        thread_param->handle = 0x997;
-    } else if (rec_session == 4) {
-        thread_param->handle = 0x996;
-    }
+    thread_param->handle = 0x99A - rec_session;
 }
 
 void usage() {
@@ -527,6 +571,7 @@ void usage() {
     printf(" -i  --interactive-mode                    - Use this flag if prefer configuring streams using interactive mode\n");
     printf("                                             All other flags passed would be ignore if this flag is used\n\n");
     printf(" -S  --source-tracking                     - Use this flag to show capture source tracking params for recordings\n\n");
+    printf(" -k --kvpairs                              - kvpairs to be set globally\n");
     printf(" -h  --help                                - Show this help\n\n");
     printf(" \n Examples \n");
     printf(" hal_rec_test     -> start a recording stream with default configurations\n\n");
@@ -538,17 +583,28 @@ void usage() {
     printf(" hal_rec_test -S -c 1 -r 48000 -t 30 -> Enable Sourcetracking\n");
     printf("                                      For mono channel 48kHz rate for 30seconds\n\n");
     printf(" hal_rec_test -F 1 --kpi-mode -> start a recording with low latency input flag and calculate latency KPIs\n\n");
+    printf(" hal_rec_test -c 1 -r 16000 -t 30 -k ffvOn=true;ffv_ec_ref_ch_cnt=2 -> Enable FFV with stereo ec ref\n");
+    printf("                                               For mono channel 16kHz rate for 30seconds\n\n");
+}
+
+static void qti_audio_server_death_notify_cb(void *ctxt __unused) {
+    fprintf(log_file, "qas died\n");
+    fprintf(stderr, "qas died\n");
+    stop_record = true;
 }
 
 int main(int argc, char* argv[]) {
     int max_recordings_requested = 0, status = 0;
-    int thread_active[4] = {0};
+    int thread_active[MAX_RECORD_SESSIONS] = {0};
     qahw_module_handle_t *qahw_mod_handle;
     const  char *mod_name = "audio.primary";
-    struct audio_config_params params[4];
+    struct audio_config_params params[MAX_RECORD_SESSIONS];
     bool interactive_mode = false, source_tracking = false;
     struct listnode param_list;
     char log_filename[256] = "stdout";
+    bool wakelock_acquired = false;
+    int i;
+    const char *recording_session[MAX_RECORD_SESSIONS] = {"first", "second", "third", "fourth", "fifth", "sixth"};
 
     log_file = stdout;
     list_init(&param_list);
@@ -568,6 +624,7 @@ int main(int argc, char* argv[]) {
         {"kpi-mode",        no_argument,          0, 'K'},
         {"interactive",     no_argument,          0, 'i'},
         {"source-tracking", no_argument,          0, 'S'},
+        {"kvpairs",         required_argument,    0, 'k'},
         {"help",            no_argument,          0, 'h'},
         {0, 0, 0, 0}
     };
@@ -576,7 +633,7 @@ int main(int argc, char* argv[]) {
     int option_index = 0;
     while ((opt = getopt_long(argc,
                               argv,
-                              "-d:f:F:r:c:s:p:t:D:l:KiSh",
+                              "-d:f:F:r:c:s:p:t:D:l:k:KiSh",
                               long_options,
                               &option_index)) != -1) {
             switch (opt) {
@@ -619,13 +676,19 @@ int main(int argc, char* argv[]) {
             case 'S':
                 source_tracking = true;
                 break;
+            case 'k':
+                snprintf(params[0].kvpairs, sizeof(params[0].kvpairs), "%s", optarg);
+                break;
             case 'h':
                 usage();
                 return 0;
                 break;
          }
     }
+    fprintf(log_file, "registering qas callback");
+    qahw_register_qas_death_notify_cb((audio_error_callback)qti_audio_server_death_notify_cb, context);
 
+    wakelock_acquired = request_wake_lock(wakelock_acquired, true);
     qahw_mod_handle = qahw_load_module(mod_name);
     if(qahw_mod_handle == NULL) {
         fprintf(log_file, " qahw_load_module failed");
@@ -636,8 +699,16 @@ int main(int argc, char* argv[]) {
         printf(" Enter logfile path (stdout or 1 for console out)::: \n");
         scanf(" %s", log_filename);
         printf(" Enter number of record sessions to be started \n");
-        printf("             (Maximum of 4 record sessions are allowed)::::  ");
+        printf("             (Maximum of %d record sessions are allowed)::::  ", MAX_RECORD_SESSIONS);
         scanf(" %d", &max_recordings_requested);
+        if (max_recordings_requested > MAX_RECORD_SESSIONS) {
+            fprintf(log_file, " INVALID input -- Max record sessions supported is %d -exit \n",
+                                                                                 MAX_RECORD_SESSIONS);
+            if (log_file != stdout)
+                fprintf(stdout, " INVALID input -- Max record sessions supported is %d -exit \n",
+                                                                                 MAX_RECORD_SESSIONS);
+            return -1;
+        }
     } else {
         max_recordings_requested = 1;
     }
@@ -649,51 +720,17 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    switch (max_recordings_requested) {
-        case 4:
-            if (interactive_mode) {
-                printf(" Enter the config params for fourth record session \n");
-                fill_default_params(&params[3], 4);
-                read_config_params_from_user(&params[3]);
-            }
-            params[3].qahw_mod_handle = qahw_mod_handle;
-            thread_active[3] = 1;
-            printf(" \n");
-        case 3:
-            if (interactive_mode) {
-                printf(" Enter the config params for third record session \n");
-                fill_default_params(&params[2], 3);
-                read_config_params_from_user(&params[2]);
-            }
-            params[2].qahw_mod_handle = qahw_mod_handle;
-            thread_active[2] = 1;
-            printf(" \n");
-        case 2:
-            if (interactive_mode) {
-                printf(" Enter the config params for second record session \n");
-                fill_default_params(&params[1], 2);
-                read_config_params_from_user(&params[1]);
-            }
-            params[1].qahw_mod_handle = qahw_mod_handle;
-            thread_active[1] = 1;
-            printf(" \n");
-        case 1:
-            if (interactive_mode) {
-                printf(" Enter the config params for first record session \n");
-                fill_default_params(&params[0], 1);
-                read_config_params_from_user(&params[0]);
-            }
-            params[0].qahw_mod_handle = qahw_mod_handle;
-            thread_active[0] = 1;
-            printf(" \n");
-            break;
-        default:
-            fprintf(log_file, " INVALID input -- Max record sessions supported is 4 -exit \n");
-            if (log_file != stdout)
-                fprintf(stdout, " INVALID input -- Max record sessions supported is 4 -exit \n");
-            status = -1;
-            break;
+    for (i = max_recordings_requested; i > 0;  i--) {
+        if (interactive_mode) {
+            printf("Enter the config params for %s record session \n", recording_session[i - 1]);
+            fill_default_params(&params[i - 1], i);
+            read_config_params_from_user(&params[i - 1]);
+        }
+        params[i - 1].qahw_mod_handle = qahw_mod_handle;
+        thread_active[i - 1] = 1;
+        printf(" \n");
     }
+
     if (interactive_mode && status == 0) {
         int option = 0;
 
@@ -728,7 +765,21 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    pthread_t tid[4];
+    /* set global setparams entered by user.
+     * Also other global setparams can be concatenated if required.
+     */
+    if (params[0].kvpairs[0] != 0) {
+        size_t len;
+        len = strcspn(params[0].kvpairs, ",");
+        while (len < strlen(params[0].kvpairs)) {
+            params[0].kvpairs[len] = ';';
+            len = strcspn(params[0].kvpairs, ",");
+        }
+        printf("param %s set to hal\n", params[0].kvpairs);
+        qahw_set_parameters(qahw_mod_handle, params[0].kvpairs);
+    }
+
+    pthread_t tid[MAX_RECORD_SESSIONS];
     pthread_t sourcetrack_thread;
     int ret = -1;
 
@@ -759,50 +810,20 @@ int main(int argc, char* argv[]) {
     if (signal(SIGINT, stop_signal_handler) == SIG_ERR)
         fprintf(log_file, "Failed to register SIGINT:%d\n",errno);
 
-    if (thread_active[0] == 1) {
-        fprintf(log_file, "\n Create first record thread \n");
-        ret = pthread_create(&tid[0], NULL, start_input, (void *)&params[0]);
-        if (ret) {
-            status = -1;
-            fprintf(log_file, " Failed to create first record thread \n ");
-            if (log_file != stdout)
-                fprintf(stdout, " Failed to create first record thread \n ");
-            thread_active[0] = 0;
+    for (i = 0; i < MAX_RECORD_SESSIONS; i++) {
+        if (thread_active[i] == 1) {
+            fprintf(log_file, "\n Create %s record thread \n", recording_session[i]);
+            ret = pthread_create(&tid[i], NULL, start_input, (void *)&params[i]);
+            if (ret) {
+                status = -1;
+                fprintf(log_file, " Failed to create %s record thread \n", recording_session[i]);
+                if (log_file != stdout)
+                    fprintf(stdout, " Failed to create %s record thread \n", recording_session[i]);
+                thread_active[i] = 0;
+            }
         }
     }
-    if (thread_active[1] == 1) {
-        fprintf(log_file, "Create second record thread \n");
-        ret = pthread_create(&tid[1], NULL, start_input, (void *)&params[1]);
-        if (ret) {
-            status = -1;
-            fprintf(log_file, " Failed to create second record thread \n ");
-            if (log_file != stdout)
-                fprintf(stdout, " Failed to create second record thread \n ");
-            thread_active[1] = 0;
-        }
-    }
-    if (thread_active[2] == 1) {
-        fprintf(log_file, "Create third record thread \n");
-        ret = pthread_create(&tid[2], NULL, start_input, (void *)&params[2]);
-        if (ret) {
-            status = -1;
-            fprintf(log_file, " Failed to create third record thread \n ");
-            if (log_file != stdout)
-                fprintf(stdout, " Failed to create third record thread \n ");
-            thread_active[2] = 0;
-        }
-    }
-    if (thread_active[3] == 1) {
-        fprintf(log_file, "Create fourth record thread \n");
-        ret = pthread_create(&tid[3], NULL, start_input, (void *)&params[3]);
-        if (ret) {
-            status = -1;
-            fprintf(log_file, " Failed to create fourth record thread \n ");
-            if (log_file != stdout)
-                fprintf(stdout, " Failed to create fourth record thread \n ");
-            thread_active[3] = 0;
-        }
-    }
+
     fprintf(log_file, " All threads started \n");
     if (log_file != stdout)
         fprintf(stdout, " All threads started \n");
@@ -831,21 +852,12 @@ int main(int argc, char* argv[]) {
     fprintf(log_file, " Waiting for threads exit \n");
     if (log_file != stdout)
         fprintf(stdout, " Waiting for threads exit \n");
-    if (thread_active[0] == 1) {
-        pthread_join(tid[0], NULL);
-        fprintf(log_file, " after first record thread exit \n");
-    }
-    if (thread_active[1] == 1) {
-        pthread_join(tid[1], NULL);
-        fprintf(log_file, " after second record thread exit \n");
-    }
-    if (thread_active[2] == 1) {
-        pthread_join(tid[2], NULL);
-        fprintf(log_file, " after third record thread exit \n");
-    }
-    if (thread_active[3] == 1) {
-        pthread_join(tid[3], NULL);
-        fprintf(log_file, " after fourth record thread exit \n");
+
+    for (i = 0; i < MAX_RECORD_SESSIONS; i++) {
+        if (thread_active[i] == 1) {
+            pthread_join(tid[i], NULL);
+            fprintf(log_file, " after %s record thread exit \n", recording_session[i]);
+        }
     }
 
 sourcetrack_error:
@@ -859,10 +871,14 @@ sourcetrack_error:
         fprintf(log_file, "could not unload hal %d \n",ret);
     }
 
-    fprintf(log_file, "\n Done with hal record test \n");
+    /* Caution: Below ADL log shouldnt be altered without notifying automation APT since it used
+     * for automation testing
+     */
+    fprintf(log_file, "\n ADL: Done with hal record test \n");
     if (log_file != stdout) {
-        fprintf(stdout, "\n Done with hal record test \n");
+        fprintf(stdout, "\n ADL: Done with hal record test \n");
         fclose(log_file);
     }
+    wakelock_acquired = request_wake_lock(wakelock_acquired, false);
     return 0;
 }

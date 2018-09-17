@@ -34,6 +34,12 @@
 #include "sound/compress_params.h"
 #include "sound/devdep_params.h"
 
+#ifdef DYNAMIC_LOG_ENABLED
+#include <log_xml_parser.h>
+#define LOG_MASK HAL_MOD_FILE_DOLBY
+#include <log_utils.h>
+#endif
+
 #ifdef DS1_DOLBY_DDP_ENABLED
 
 #define AUDIO_PARAMETER_DDP_DEV          "ddp_device"
@@ -190,7 +196,7 @@ void send_ddp_endp_params_stream(struct stream_out *out,
                                  bool set_cache __unused)
 {
     int idx, i;
-    int ddp_endp_params_data[2*DDP_ENDP_NUM_PARAMS + 1];
+    long ddp_endp_params_data[2*DDP_ENDP_NUM_PARAMS + 1];
     int length = 0;
     for(idx=0; idx<DDP_ENDP_NUM_DEVICES; idx++) {
         if(ddp_endp_params[idx].device & device) {
@@ -356,19 +362,6 @@ void audio_extn_ddp_set_parameters(struct audio_device *adev,
 }
 #endif /* DS1_DOLBY_DDP_ENABLED */
 
-#if defined(DS1_DOLBY_DDP_ENABLED) || defined(DS2_DOLBY_DAP_ENABLED)
-bool audio_extn_is_dolby_format(audio_format_t format)
-{
-    if (format == AUDIO_FORMAT_AC3 ||
-            format == AUDIO_FORMAT_E_AC3 ||
-            format == AUDIO_FORMAT_E_AC3_JOC)
-        return true;
-    else
-        return false;
-}
-#endif /* DS1_DOLBY_DDP_ENABLED || DS2_DOLBY_DAP_ENABLED */
-
-
 #ifdef DS1_DOLBY_DAP_ENABLED
 void audio_extn_dolby_set_endpoint(struct audio_device *adev)
 {
@@ -424,7 +417,7 @@ void audio_extn_dolby_set_dmid(struct audio_device *adev)
     if (!send)
         return;
 
-    property_get("dmid",c_dmid,"0");
+    property_get("vendor.audio.dmid",c_dmid,"0");
     i_dmid = atoll(c_dmid);
 
     ctl = mixer_get_ctl_by_name(adev->mixer, mixer_ctl_name);
@@ -559,7 +552,7 @@ int audio_extn_ds2_enable(struct audio_device *adev) {
     const char *mixer_ctl_name = "DS2 OnOff";
     struct mixer_ctl *ctl;
 
-    property_get("audio.dolby.ds2.enabled", value, NULL);
+    property_get("vendor.audio.dolby.ds2.enabled", value, NULL);
     ds2_enabled = atoi(value) || !strncmp("true", value, 4);
 
     ALOGV("%s:", __func__);
@@ -606,7 +599,7 @@ void audio_extn_dolby_set_license(struct audio_device *adev __unused)
     /* As ACDB based license mechanism is disabled, force set the license key to 0*/
     i_key = 0;
 #endif
-    property_get("dmid",c_dmid,"0");
+    property_get("vendor.audio.dmid",c_dmid,"0");
     i_dmid = atoll(c_dmid);
     ALOGV("%s Setting DS1 License, key:0x%x dmid %d",__func__, i_key,i_dmid);
     dolby_license.dmid = i_dmid;

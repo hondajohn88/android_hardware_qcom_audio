@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2014,2016 The Linux Foundation. All rights reserved.
+Copyright (c) 2010-2014, 2016-2018 The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -56,10 +56,8 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <pthread.h>
 #include "QOMX_AudioExtensions.h"
 #include "QOMX_AudioIndexExtensions.h"
-#ifdef AUDIOV2 
-#include "control.h" 
-#endif
 #include <linux/ioctl.h>
+#include <errno.h>
 
 typedef unsigned char uint8;
 typedef unsigned char byte;
@@ -81,14 +79,6 @@ void audaac_rec_install_bits
 #define AUDAAC_MAX_ADTS_HEADER_LENGTH 7
 void audaac_rec_install_adts_header_variable (uint16  byte_num);
 void Release_Encoder();
-
-#ifdef AUDIOV2
-unsigned short session_id;
-int device_id;
-int control = 0;
-const char *device="handset_tx";
-#define DIR_TX 2
-#endif
 
 #define AACHDR_LAYER_SIZE             2
 #define AACHDR_CRC_SIZE               1
@@ -268,6 +258,77 @@ static OMX_ERRORTYPE FillBufferDone(OMX_IN OMX_HANDLETYPE hComponent,
                                      OMX_IN OMX_PTR pAppData,
                                      OMX_IN OMX_BUFFERHEADERTYPE* pBuffer);
 static OMX_ERRORTYPE  parse_pcm_header();
+
+typedef enum {
+    UINTMAX = 1,
+    UCHARMAX,
+    USHRTMAX
+}datatype;
+
+int get_input_and_validate(char *input, datatype type)
+{
+    unsigned long int value = 0;
+    char *ptr = NULL;
+    int status = 0;
+
+    errno = 0;
+
+    if (input == NULL){
+        DEBUG_PRINT("No input is given\n");
+        status = -1;
+        goto exit;
+    }
+    ptr = (char *)malloc(strlen(input) + 1);
+    if (ptr == NULL) {
+        DEBUG_PRINT("Low memory\n");
+        status = -1;
+        goto exit;
+    }
+    /* Check for negative input */
+    if (*input == '-') {
+        DEBUG_PRINT("Negative Number is not allowed\n");
+        status = -1;
+        goto exit;
+    }
+    /* Convert string to unsigned long int */
+    value = strtoul(input, &ptr, 10);
+    if (errno != 0){
+        perror("strtoul");
+        status = errno;
+        goto exit;
+    }
+    /* check if number input is zero or string or string##number or viceversa */
+    if (value == 0 || *ptr != '\0'){
+        DEBUG_PRINT("Input is string+number or Zero or string = %s\n", input);
+        status = -1;
+        goto exit;
+    }
+    /* check for out of range */
+    switch(type) {
+    case 1 :if (value > UINT_MAX) {
+                DEBUG_PRINT("Input is Out of range\n");
+                status = -1;
+            }
+            break;
+    case 2 :if (value > UCHAR_MAX) {
+                DEBUG_PRINT("Input is Out of range\n");
+                status = -1;
+            }
+            break;
+    case 3 :if (value > USHRT_MAX) {
+                DEBUG_PRINT("Input is Out of range\n");
+                status = -1;
+            }
+            break;
+    }
+exit:
+    if (ptr != NULL)
+        free(ptr);
+    if (status != 0)
+        exit(0);
+    return value;
+}
+
 void wait_for_event(void)
 {
     pthread_mutex_lock(&lock);
@@ -522,10 +583,14 @@ int main(int argc, char **argv)
     if (argc >= 9) {
       in_filename = argv[1];
       out_filename = argv[2];
+      if (in_filename == NULL || out_filename == NULL) {
+                DEBUG_PRINT("Invalid %s filename\n", in_filename ? "Output":"Input");
+                return 0;
+      }
       aac_samplerate = (uint32_t)atoi(argv[3]);
       aac_channels = (uint32_t)atoi(argv[4]);
       tunnel  = (uint32_t)atoi(argv[5]);
-      rectime = (uint32_t)atoi(argv[6]);
+      rectime = (uint32_t)get_input_and_validate(argv[6], UINTMAX);
       bitrate = (uint32_t)atoi(argv[7]);
       format =  (uint32_t)atoi(argv[8]);
       profile = (uint32_t)atoi(argv[9]);
@@ -633,22 +698,6 @@ int main(int argc, char **argv)
                 DEBUG_PRINT ("\nOMX_FreeHandle error. Error code: %d\n", result);
             }
             /* Deinit OpenMAX */
-            if(tunnel)
-            {
-                #ifdef AUDIOV2
-                if (msm_route_stream(DIR_TX,session_id,device_id, 0))
-                {
-                    DEBUG_PRINT("\ncould not set stream routing\n");
-                    return -1;
-                }
-                if (msm_en_device(device_id, 0))
-                {
-                    DEBUG_PRINT("\ncould not enable device\n");
-                    return -1;
-                }
-                msm_mixer_close();
-                #endif
-            }
             OMX_Deinit();
             ebd_cnt=0;
             bOutputEosReached = false;
@@ -826,29 +875,6 @@ int Play_Encoder()
     OMX_SetParameter(aac_enc_handle,OMX_IndexParamAudioAac,&aacparam);
     OMX_GetExtensionIndex(aac_enc_handle,"OMX.Qualcomm.index.audio.sessionId",&index);
     OMX_GetParameter(aac_enc_handle,index,&streaminfoparam);
-    if(tunnel)
-    {
-    #ifdef AUDIOV2
-    session_id = streaminfoparam.sessionId;
-    control = msm_mixer_open("/dev/snd/controlC0", 0);
-    if(control < 0)
-    printf("ERROR opening the device\n");
-    device_id = msm_get_device(device);
-    DEBUG_PRINT ("\ndevice_id = %d\n",device_id);
-    DEBUG_PRINT("\nsession_id = %d\n",session_id);
-    if (msm_en_device(device_id, 1))
-    {
-        perror("could not enable device\n");
-        return -1;
-    }
-
-    if (msm_route_stream(DIR_TX,session_id,device_id, 1))
-    {
-        perror("could not set stream routing\n");
-        return -1;
-    }
-    #endif
-    }
     DEBUG_PRINT ("\nOMX_SendCommand Encoder -> IDLE\n");
     OMX_SendCommand(aac_enc_handle, OMX_CommandStateSet, OMX_StateIdle,0);
     /* wait_for_event(); should not wait here event complete status will
@@ -1024,7 +1050,7 @@ static int open_audio_file ()
         if (inputBufferFile == NULL) {
             DEBUG_PRINT("\ni/p file %s could NOT be opened\n",
                                          in_filename);
-        error_code = -1;
+            return -1;
         }
         if(parse_pcm_header() != 0x00)
         {

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015, 2017 The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -40,6 +40,7 @@
 #include <cutils/str_parms.h>
 #include <cutils/properties.h>
 #include <hardware/audio_effect.h>
+#include <pthread.h>
 #include "bundle.h"
 #include "equalizer.h"
 #include "bass_boost.h"
@@ -101,7 +102,8 @@ static int asphere_notify_app(void)
 
 static int asphere_get_values_from_mixer(void)
 {
-    int ret = 0, val[2] = {-1, -1};
+    int ret = 0;
+    long val[2] = {-1, -1};
     struct mixer_ctl *ctl = NULL;
     struct mixer *mixer = mixer_open(MIXER_CARD);
     if (mixer)
@@ -124,7 +126,8 @@ static int asphere_get_values_from_mixer(void)
 
 static int asphere_set_values_to_mixer(void)
 {
-    int ret = 0, val[2] = {-1, -1};
+    int ret = 0;
+    long val[2] = {-1, -1};
     struct mixer_ctl *ctl = NULL;
     struct mixer *mixer = mixer_open(MIXER_CARD);
     if (mixer)
@@ -166,7 +169,7 @@ void asphere_set_parameters(struct str_parms *parms)
     char propValue[PROPERTY_VALUE_MAX] = {0};
     bool set_enable = false, set_strength = false;
 
-    if (!property_get("audio.pp.asphere.enabled", propValue, "false") ||
+    if (!property_get("vendor.audio.pp.asphere.enabled", propValue, "false") ||
         (strncmp("true", propValue, 4) != 0)) {
         ALOGV("%s: property not set!!! not doing anything", __func__);
         return;
@@ -208,7 +211,7 @@ void asphere_get_parameters(struct str_parms *query,
     char propValue[PROPERTY_VALUE_MAX] = {0};
     int get_status, get_enable, get_strength, ret;
 
-    if (!property_get("audio.pp.asphere.enabled", propValue, "false") ||
+    if (!property_get("vendor.audio.pp.asphere.enabled", propValue, "false") ||
         (strncmp("true", propValue, 4) != 0)) {
         ALOGV("%s: property not set!!! not doing anything", __func__);
         return;
@@ -265,7 +268,7 @@ void handle_asphere_on_effect_enabled(bool enable,
     char propValue[PROPERTY_VALUE_MAX] = {0};
 
     ALOGV("%s: effect %0x", __func__, context->desc->type.timeLow);
-    if (!property_get("audio.pp.asphere.enabled", propValue, "false") ||
+    if (!property_get("vendor.audio.pp.asphere.enabled", propValue, "false") ||
         (strncmp("true", propValue, 4) != 0)) {
         ALOGV("%s: property not set!!! not doing anything", __func__);
         return;
